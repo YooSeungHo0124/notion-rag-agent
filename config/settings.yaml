@@ -1,0 +1,20 @@
+llm:
+  timeout_s: 180
+  max_retries: 2
+
+chunking:
+  max_chars: 1200
+  overlap_chars: 150
+
+embedding:
+  dense_model: Qwen/Qwen3-Embedding-4B
+  sparse_model: BAAI/bge-m3
+  device: cuda
+  batch_size: 16
+
+retrieval:
+  collection: notion_chunks
+  candidate_k: 50
+  final_k: 5
+  reranker_model: BAAI/bge-reranker-v2-m3
+  min_rerank_score: 0.2
