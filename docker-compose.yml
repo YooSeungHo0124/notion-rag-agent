@@ -1,0 +1,22 @@
+# Infra only. The app runs in the local uv venv so that `claude -p`
+# can use the host's subscription login without copying credentials into a container.
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.15.4
+    ports:
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    volumes:
+      - ./volumes/qdrant:/qdrant/storage
+    restart: unless-stopped
+
+  phoenix:
+    image: arizephoenix/phoenix:version-11.38.0
+    ports:
+      - "127.0.0.1:6006:6006"   # UI
+      - "127.0.0.1:4317:4317"   # OTLP gRPC
+    volumes:
+      - ./volumes/phoenix:/mnt/data
+    environment:
+      - PHOENIX_WORKING_DIR=/mnt/data
+    restart: unless-stopped

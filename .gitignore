@@ -1,0 +1,34 @@
+# env / secrets
+.env
+*.env.local
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# runtime data
+data/
+volumes/
+eval/runs/
+*.db
+*.sqlite
+
+# models
+models/
+*.gguf
+*.safetensors
+
+# node
+node_modules/
+web/dist/
+
+# os / ide
+.DS_Store
+.idea/
+.vscode/
