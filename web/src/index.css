@@ -341,3 +341,10 @@ svg.lucide{width:16px;height:16px;stroke-width:1.75;flex:none}
 .undo-bar{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);z-index:61;display:flex;align-items:center;gap:12px;background:var(--text);color:var(--bg);padding:8px 8px 8px 14px;border-radius:8px;font-size:13px;box-shadow:var(--float);animation:fade .15s ease-out}
 .undo-bar button{color:var(--bg);font-weight:600;padding:4px 10px;border-radius:6px;background:color-mix(in srgb,var(--bg) 18%,transparent)}
 .undo-bar button:hover{background:color-mix(in srgb,var(--bg) 28%,transparent)}
+/* answer images (from cited Notion pages) */
+.img-blk{margin:4px 0 0;border:1px solid var(--border);border-radius:10px;overflow:hidden;cursor:pointer;background:var(--bg-subtle);max-width:560px}
+.img-blk img{display:block;width:100%;max-height:420px;object-fit:contain;background:var(--bg)}
+.img-blk figcaption{display:flex;flex-direction:column;gap:2px;padding:8px 12px;font-size:12.5px;border-top:1px solid var(--border)}
+.img-blk .cap{color:var(--text)}
+.img-blk .from{color:var(--text-muted)}
+.img-blk:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--border))}

@@ -338,7 +338,7 @@ export default function TurnView({ t, act, generating }: { t: Turn; act: TurnAct
               {(t.doneMs / 1000).toFixed(1)}초 · 근거 검증 완료
             </div>
           )}
-          <AnswerBody a={a} />
+          <AnswerBody a={a} images={t.images} />
           {t.run && <Trace run={t.run} />}
           <Trust t={t} a={a} act={act} />
         </>

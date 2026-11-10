@@ -26,7 +26,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -50,6 +50,7 @@ class Services:
     run_sync: Callable[[bool], SyncReport] | None = None  # arg: full
     agent: Any | None = None  # notion_agent.agent.graph.NotionAgent
     pages: Any | None = None  # notion_agent.api.pages.PageLoader
+    images: Any | None = None  # notion_agent.qa.images.ImageService
     last_sync: Callable[[], str | None] = lambda: None
 
 
@@ -158,6 +159,11 @@ class ResumeRequest(BaseModel):
     thread_id: str
     approved: bool
     args: dict[str, Any] | None = None
+
+
+class ImagesRequest(BaseModel):
+    sources: list[dict[str, Any]] = Field(default_factory=list)  # {page_id, block_ids}
+    sentences: list[dict[str, Any]] = Field(default_factory=list)  # {text, citations, type}
 
 
 class SyncRequest(BaseModel):
@@ -275,6 +281,49 @@ def create_app(
         if p is None:
             raise HTTPException(404, "페이지를 찾을 수 없습니다")
         return p
+
+    @app.post("/api/answer/images")
+    def answer_images(req: ImagesRequest) -> dict[str, Any]:
+        """Images near the cited blocks that the reranker judges relevant to the citing
+        sentence (see qa/images.py). Called by the UI after the answer is shown."""
+        svc = st.require()
+        if svc.images is None or not req.sources:
+            return {"images": []}
+        try:
+            cands = svc.images.candidates(req.sources[:8])  # Notion API, no lock
+        except Exception as e:  # noqa: BLE001 - images are optional
+            log.warning("image candidates failed: %s", e)
+            return {"images": []}
+        if not cands:
+            return {"images": []}
+        if not st.lock.acquire(timeout=60):
+            return {"images": []}
+        try:
+            chosen = svc.images.select(cands, req.sentences)  # reranker on GPU
+        finally:
+            st.lock.release()
+        return {"images": [{
+            "block_id": c.block_id, "page_id": c.page_id, "source": c.source,
+            "after_block": c.after_block, "caption": c.caption, "context": c.context[:200],
+            "heading": c.heading, "score": round(c.score, 3),
+            "src": f"/api/image/{c.block_id}",
+        } for c in chosen]}
+
+    @app.get("/api/image/{block_id}")
+    def image(block_id: str) -> Response:
+        """Proxy for an image we proposed (Notion file URLs expire after ~1 h)."""
+        svc = st.require()
+        if svc.images is None:
+            raise HTTPException(404)
+        try:
+            got = svc.images.image(block_id)
+        except Exception as e:  # noqa: BLE001
+            log.warning("image fetch failed: %s", e)
+            raise HTTPException(502, "이미지를 가져오지 못했습니다") from e
+        if got is None:
+            raise HTTPException(404)
+        data, ctype = got
+        return Response(data, media_type=ctype, headers={"Cache-Control": "private, max-age=3000"})
 
     @app.post("/api/ask/stream")
     def ask_stream(req: AskRequest) -> StreamingResponse:
@@ -427,18 +476,21 @@ def load_real_services() -> Services:
 
     from notion_agent.agent.factory import build_agent
     from notion_agent.api.pages import PageLoader, index_fetcher, live_fetcher
+    from notion_agent.qa.images import ImageService
 
-    live = None
+    live = images = None
     if s.notion_token:
         from notion_agent.ingest.notion_reader import NotionReader
 
         live = live_fetcher(NotionReader.from_settings(s))
+        images = ImageService(NotionReader.from_settings(s), qa.verifier)
 
     return Services(
         store=retriever.store,
         qa=qa,
         agent=build_agent(s, qa),
         pages=PageLoader(live, index_fetcher(retriever.store)),
+        images=images,
         run_sync=run_sync,
         last_sync=lambda: read_last_sync(s.state_db),
     )

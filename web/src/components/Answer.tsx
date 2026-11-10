@@ -1,6 +1,6 @@
 import { Copy, GitCompare, Info, Lightbulb, Table2, BarChart3, ArrowRight, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
-import type { Answer, Sentence } from "../types";
+import type { Answer, AnswerImage, Sentence } from "../types";
 
 /* Generative UI: each typed block from the LLM maps to one component.
    `.s[data-src]` + `.cite` wire the answer to the source panel (linked highlight). */
@@ -226,7 +226,23 @@ const FlowNode = ({ name, note, last }: { name: string; note?: string; last: boo
   </>
 );
 
-export default function AnswerBody({ a }: { a: Answer }) {
+function Figure({ img, a }: { img: AnswerImage; a: Answer }) {
+  const hit = a.sources[img.source - 1];
+  const where = [hit?.title, img.heading].filter(Boolean).join(" › ");
+  return (
+    <figure className="img-blk fade" data-img-src={img.source} title="클릭하면 출처 패널에서 원문 위치를 엽니다">
+      <img src={img.src} alt={img.caption || img.context.slice(0, 80)} loading="lazy" />
+      <figcaption>
+        {img.caption && <span className="cap">{img.caption}</span>}
+        <span className="from">
+          출처 {img.source} · {where}
+        </span>
+      </figcaption>
+    </figure>
+  );
+}
+
+export default function AnswerBody({ a, images = [] }: { a: Answer; images?: AnswerImage[] }) {
   const out: ReactNode[] = [];
   let run: Sentence[] = [];
   const flush = () => {
@@ -246,14 +262,18 @@ export default function AnswerBody({ a }: { a: Answer }) {
     );
     run = [];
   };
-  for (const s of a.sentences) {
-    if (!s.type || s.type === "text") {
-      run.push(s);
-      continue;
+  a.sentences.forEach((s, j) => {
+    if (!s.type || s.type === "text") run.push(s);
+    else {
+      flush();
+      out.push(<Block key={`b${out.length}`} s={s} />);
     }
-    flush();
-    out.push(<Block key={`b${out.length}`} s={s} />);
-  }
+    const imgs = images.filter((im) => im.after_block === j);
+    if (imgs.length) {
+      flush();
+      imgs.forEach((im) => out.push(<Figure key={`i${im.block_id}`} img={im} a={a} />));
+    }
+  });
   flush();
   return <div className="answer fade">{out}</div>;
 }
