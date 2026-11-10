@@ -6,6 +6,7 @@ from typing import Any, Protocol
 
 from qdrant_client import models
 
+MAX_TOKENS = 2048  # chunks are <=1200 chars; longer text is truncated, not OOM
 
 class DenseEncoder(Protocol):
     @property
@@ -46,6 +47,8 @@ class DenseEmbedder:
                 model_kwargs=kwargs,
                 tokenizer_kwargs={"padding_side": "left"},
             )
+            # Qwen3 defaults to 32k tokens; one oversized block would blow up attention memory.
+            self._model.max_seq_length = MAX_TOKENS
         return self._model
 
     @property
@@ -101,6 +104,7 @@ class SparseEmbedder:
             return_dense=False,
             return_sparse=True,
             return_colbert_vecs=False,
+            max_length=MAX_TOKENS,
         )
         return [lexical_to_sparse(w) for w in out["lexical_weights"]]
 

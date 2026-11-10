@@ -30,7 +30,7 @@ def _sections(blocks: list[Block]) -> list[_Section]:
             continue
         if b.heading_level is not None:
             stack = [(lvl, t) for lvl, t in stack if lvl < b.heading_level]
-            stack.append((b.heading_level, b.text.strip()))
+            stack.append((b.heading_level, _heading_label(b.text)))
             sections.append(_Section([t for _, t in stack]))
         sections[-1].pieces.append(_Piece(b.block_id, b.text, b.type == "code"))
     return [s for s in sections if s.pieces]
@@ -63,6 +63,13 @@ def _tail(text: str, n: int) -> str:
     cut = text[-n:]
     sp = cut.find(" ")
     return cut[sp + 1 :] if 0 <= sp < n // 2 else cut
+
+
+def _heading_label(text: str, limit: int = 80) -> str:
+    """First line of a heading without '#' marks; toggle headings carry their children."""
+    first = text.strip().splitlines()[0] if text.strip() else ""
+    first = first.lstrip("#").strip()
+    return first if len(first) <= limit else first[: limit - 1] + "…"
 
 
 def _prefix(page: NotionPage, heading_path: list[str]) -> str:

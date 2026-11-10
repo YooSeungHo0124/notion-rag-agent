@@ -45,5 +45,11 @@ def build_retriever(settings: Settings | None = None) -> Retriever:
     store, dense = _store(s), _dense(s)
     store.ensure_collection(dense.dim)
     r = s.file.retrieval
-    reranker = _get("reranker", lambda: Reranker(r.reranker_model, s.file.embedding.device))
-    return Retriever(store, dense, _sparse(s), reranker, r)  # type: ignore[arg-type]
+    return Retriever(store, dense, _sparse(s), build_verifier(s), r)  # type: ignore[arg-type]
+
+
+def build_verifier(settings: Settings | None = None) -> Reranker:
+    """The cross-encoder, shared by reranking and sentence-level grounding checks."""
+    s = settings or get_settings()
+    r = s.file.retrieval
+    return _get("reranker", lambda: Reranker(r.reranker_model, s.file.embedding.device))  # type: ignore[return-value]
