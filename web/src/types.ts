@@ -36,8 +36,12 @@ export interface Sentence {
 }
 
 export interface Stage {
-  name: "retrieving" | "retrieved" | "generating" | "verifying";
+  name: "retrieving" | "retrieved" | "generating" | "verifying" | "collecting" | "collected";
   n?: number;
+  chunks?: number;
+  pages_used?: number;
+  pages_total?: number;
+  truncated?: boolean;
   top?: number;
   titles?: string[];
   blocks?: number;
@@ -151,7 +155,9 @@ export interface PageDoc {
 export interface Turn {
   id: string;
   q: string;
-  mode: "ask" | "agent";
+  mode: "ask" | "agent" | "studio";
+  studio?: { kind: StudioKind; title: string; scopeLabel: string; topic?: string; page_ids: string[]; coverage?: Coverage };
+  mindmap?: MindNode;
   startedAt: number;
   stage?: Stage;
   retrieved?: Stage;
@@ -181,4 +187,38 @@ export interface AnswerImage {
   heading: string;
   score: number;
   src: string;
+}
+
+export type StudioKind = "briefing" | "study" | "faq" | "timeline" | "guide" | "mindmap";
+
+export interface Coverage {
+  pages_total: number;
+  pages_used: number;
+  chunks_used: number;
+  truncated: boolean;
+  topic: string;
+}
+
+export interface MindNode {
+  label: string;
+  citations: number[];
+  children: MindNode[];
+}
+
+export interface StudioResult {
+  kind: StudioKind;
+  title: string;
+  coverage: Coverage;
+  latency_ms: number;
+  answer?: Answer | null;
+  tree?: MindNode;
+  sources?: SourceHit[];
+}
+
+export interface Note {
+  id: string;
+  title: string;
+  text: string;
+  updatedAt: string;
+  fromQ?: string;
 }

@@ -1,4 +1,15 @@
-import { Bookmark, ChevronDown, ChevronRight, FolderSearch, Moon, Plus, RefreshCw, Search, Sun, Trash2 } from "lucide-react";
+import {
+  Bookmark,
+  ChevronDown,
+  ChevronRight,
+  FolderSearch,
+  Moon,
+  Plus,
+  RefreshCw,
+  Search,
+  Sun,
+  Trash2,
+} from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import type { Conv, Health, PageSource, SyncStatus } from "../types";
 import { relTime } from "../util";
@@ -7,7 +18,11 @@ function bucket(ts: number): string {
   const d = new Date(ts);
   const now = new Date();
   const day = 86400000;
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const start = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+  ).getTime();
   if (d.getTime() >= start) return "오늘";
   if (d.getTime() >= start - 6 * day) return "이번 주";
   return "이전";
@@ -53,23 +68,35 @@ export function Sidebar(p: {
         <span className="lbl">새 질문</span>
         <span className="kbd lbl">Ctrl K</span>
       </button>
-      <button className="side-btn" onClick={p.onSaved} title="저장한 답변">
+      <button className="side-btn" onClick={p.onSaved} title="메모와 저장한 답변">
         <Bookmark />
-        <span className="lbl">저장한 답변 {p.savedCount ? `(${p.savedCount})` : ""}</span>
+        <span className="lbl">
+          노트 · 저장한 답변 {p.savedCount ? `(${p.savedCount})` : ""}
+        </span>
       </button>
       <nav className="hist" aria-label="대화 기록">
         <label className="hist-search">
           <Search />
           <span className="sr-only">대화 검색</span>
-          <input placeholder="대화 검색" value={f} onChange={(e) => setF(e.target.value)} />
+          <input
+            placeholder="대화 검색"
+            value={f}
+            onChange={(e) => setF(e.target.value)}
+          />
         </label>
-        {groups.length === 0 && <h4>{f ? "일치하는 대화가 없습니다" : "아직 대화가 없습니다"}</h4>}
+        {groups.length === 0 && (
+          <h4>{f ? "일치하는 대화가 없습니다" : "아직 대화가 없습니다"}</h4>
+        )}
         {groups.map(([k, cs]) => (
           <div key={k}>
             <h4>{k}</h4>
             {cs.map((c) => (
               <div key={c.id} className="hist-item">
-                <button aria-current={c.id === p.current} onClick={() => p.onSelect(c.id)} title={c.title}>
+                <button
+                  aria-current={c.id === p.current}
+                  onClick={() => p.onSelect(c.id)}
+                  title={c.title}
+                >
                   {c.title}
                 </button>
                 <button
@@ -86,23 +113,39 @@ export function Sidebar(p: {
         ))}
       </nav>
       <div className="side-foot">
-        <button className="side-btn" onClick={(e) => p.onScope(e.currentTarget)} title="검색 범위">
+        <button
+          className="side-btn"
+          onClick={(e) => p.onScope(e.currentTarget)}
+          title="검색 범위"
+        >
           <FolderSearch />
           <span className="lbl">범위: {p.scopeLabel}</span>
           <ChevronDown className="lbl" style={{ marginLeft: "auto" }} />
         </button>
         <div className="meta">
-          <span className="dot" aria-hidden="true" style={syncing ? { background: "var(--warn)" } : undefined} />
-          {syncing ? "동기화 중…" : `동기화 ${relTime(p.health?.last_sync)} · ${p.health?.pages ?? 0} 페이지`}
+          <span
+            className="dot"
+            aria-hidden="true"
+            style={syncing ? { background: "var(--warn)" } : undefined}
+          />
+          {syncing
+            ? "동기화 중…"
+            : `동기화 ${relTime(p.health?.last_sync)} · ${p.health?.pages ?? 0} 페이지`}
           {!syncing && (
-            <button onClick={p.onSync} title="지금 동기화" aria-label="지금 동기화">
+            <button
+              onClick={p.onSync}
+              title="지금 동기화"
+              aria-label="지금 동기화"
+            >
               <RefreshCw style={{ width: 13, height: 13 }} />
             </button>
           )}
         </div>
         <button className="side-btn" onClick={p.onTheme} title="테마 전환">
           {p.theme === "dark" ? <Sun /> : <Moon />}
-          <span className="lbl">{p.theme === "dark" ? "라이트 모드" : "다크 모드"}</span>
+          <span className="lbl">
+            {p.theme === "dark" ? "라이트 모드" : "다크 모드"}
+          </span>
         </button>
       </div>
     </aside>
@@ -127,7 +170,10 @@ function buildGroups(sources: PageSource[]): Group[] {
     (UNTITLED.test(s.title.trim()) ? g.untitled : g.pages).push(s);
     m.set(name, g);
   }
-  return [...m.values()].sort((a, b) => b.pages.length + b.untitled.length - (a.pages.length + a.untitled.length));
+  return [...m.values()].sort(
+    (a, b) =>
+      b.pages.length + b.untitled.length - (a.pages.length + a.untitled.length),
+  );
 }
 
 export function ScopePopover(p: {
@@ -139,6 +185,29 @@ export function ScopePopover(p: {
 }) {
   const [f, setF] = useState("");
   const [open, setOpen] = useState<Set<string>>(new Set());
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const toggle = (ids: string[]) => {
+    const n = new Set(sel);
+    const all = ids.every((x) => n.has(x));
+    ids.forEach((x) => (all ? n.delete(x) : n.add(x)));
+    setSel(n);
+  };
+  const Check = ({ ids, label }: { ids: string[]; label: string }) => {
+    const k = ids.filter((x) => sel.has(x)).length;
+    return (
+      <input
+        type="checkbox"
+        className="pick"
+        aria-label={`${label} 선택`}
+        checked={k > 0 && k === ids.length}
+        ref={(el) => {
+          if (el) el.indeterminate = k > 0 && k < ids.length;
+        }}
+        onChange={() => toggle(ids)}
+        onClick={(e) => e.stopPropagation()}
+      />
+    );
+  };
   const ref = useRef<HTMLDivElement>(null);
   const groups = useMemo(() => buildGroups(p.sources), [p.sources]);
   if (!p.anchor) return null;
@@ -151,31 +220,55 @@ export function ScopePopover(p: {
     overflow: "auto",
   };
   return (
-    <div className="popover show" ref={ref} role="dialog" aria-label="검색 범위 선택" style={style}>
+    <div
+      className="popover show"
+      ref={ref}
+      role="dialog"
+      aria-label="검색 범위 선택"
+      style={style}
+    >
       <label className="pop-search">
         <Search />
         <span className="sr-only">페이지 검색</span>
-        <input autoFocus placeholder="페이지 검색" value={f} onChange={(e) => setF(e.target.value)} />
+        <input
+          autoFocus
+          placeholder="페이지 검색"
+          value={f}
+          onChange={(e) => setF(e.target.value)}
+        />
       </label>
       {!q && (
-        <button className="opt" role="menuitemradio" aria-checked={!p.current} onClick={() => p.onPick(null, [])}>
+        <button
+          className="opt"
+          role="menuitemradio"
+          aria-checked={!p.current}
+          onClick={() => p.onPick(null, [])}
+        >
           <span className="radio" />
           전체 노트<small>{p.sources.length}</small>
         </button>
       )}
       <h5>폴더 / 데이터베이스</h5>
       {groups.map((g) => {
-        const pages = q ? g.pages.filter((s) => s.title.toLowerCase().includes(q)) : g.pages;
-        if (q && !pages.length && !g.name.toLowerCase().includes(q)) return null;
+        const pages = q
+          ? g.pages.filter((s) => s.title.toLowerCase().includes(q))
+          : g.pages;
+        if (q && !pages.length && !g.name.toLowerCase().includes(q))
+          return null;
         const expanded = open.has(g.name) || !!q;
         const all = [...g.pages, ...g.untitled];
         return (
           <div key={g.name}>
-            <div style={{ display: "flex" }}>
+            <div style={{ display: "flex", alignItems: "center" }}>
+              <Check ids={all.map((s) => s.page_id)} label={g.name} />
               <button
                 className="opt"
                 aria-expanded={expanded}
-                style={{ width: 28, padding: "6px 4px", justifyContent: "center" }}
+                style={{
+                  width: 28,
+                  padding: "6px 4px",
+                  justifyContent: "center",
+                }}
                 aria-label="펼치기"
                 onClick={() => {
                   const n = new Set(open);
@@ -190,7 +283,12 @@ export function ScopePopover(p: {
                 className="opt"
                 aria-checked={p.current === g.name}
                 role="menuitemradio"
-                onClick={() => p.onPick(g.name, all.map((s) => s.page_id))}
+                onClick={() =>
+                  p.onPick(
+                    g.name,
+                    all.map((s) => s.page_id),
+                  )
+                }
               >
                 {g.name}
                 <small>{all.length}</small>
@@ -199,26 +297,70 @@ export function ScopePopover(p: {
             {expanded && (
               <div className="sub show">
                 {g.untitled.length > 0 && !q && (
-                  <div className="grp-note">날짜·제목 없는 기록 {g.untitled.length}개는 폴더 선택에 포함됩니다</div>
+                  <div className="grp-note">
+                    날짜·제목 없는 기록 {g.untitled.length}개는 폴더 선택에
+                    포함됩니다
+                  </div>
                 )}
                 {pages.slice(0, 60).map((s) => (
-                  <button
+                  <div
                     key={s.page_id}
-                    className="opt"
-                    aria-checked={p.current === s.title}
-                    onClick={() => p.onPick(s.title, [s.page_id])}
+                    style={{ display: "flex", alignItems: "center" }}
                   >
-                    <span className="radio" />
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</span>
-                    <small>{s.chunks}</small>
-                  </button>
+                    <Check ids={[s.page_id]} label={s.title} />
+                    <button
+                      className="opt"
+                      aria-checked={p.current === s.title}
+                      onClick={() => p.onPick(s.title, [s.page_id])}
+                    >
+                      <span className="radio" />
+                      <span
+                        style={{
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {s.title}
+                      </span>
+                      <small>{s.chunks}</small>
+                    </button>
+                  </div>
                 ))}
-                {pages.length > 60 && <div className="grp-note">… {pages.length - 60}개 더 (검색으로 좁히세요)</div>}
+                {pages.length > 60 && (
+                  <div className="grp-note">
+                    … {pages.length - 60}개 더 (검색으로 좁히세요)
+                  </div>
+                )}
               </div>
             )}
           </div>
         );
       })}
+      {sel.size > 0 && (
+        <div className="pick-bar">
+          <span>{sel.size}개 페이지 선택</span>
+          <button className="btn ghost" onClick={() => setSel(new Set())}>
+            해제
+          </button>
+          <button
+            className="btn primary"
+            onClick={() => {
+              const ids = [...sel];
+              const first =
+                p.sources.find((s) => s.page_id === ids[0])?.title ?? "";
+              p.onPick(
+                ids.length === 1
+                  ? first
+                  : `${first.slice(0, 14)} 외 ${ids.length - 1}개`,
+                ids,
+              );
+            }}
+          >
+            이 페이지들로
+          </button>
+        </div>
+      )}
     </div>
   );
 }

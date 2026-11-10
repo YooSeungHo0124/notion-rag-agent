@@ -1,4 +1,6 @@
-import type { AgentRun, Answer, AnswerImage, PageDoc, Stage, Health, PageSource, SyncStatus } from "./types";
+import type {
+  AgentRun, Answer, AnswerImage, Note, PageDoc, Stage, Health, PageSource, StudioKind, StudioResult, SyncStatus,
+} from "./types";
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, {
@@ -18,6 +20,40 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
   return (await r.json()) as T;
 }
 
+async function sse<T>(
+  url: string,
+  body: unknown,
+  final: string,
+  onStage: (s: Stage) => void,
+  signal?: AbortSignal,
+): Promise<T> {
+  const r = await fetch(url, {
+    method: "POST",
+    signal,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok || !r.body) throw new Error(`${r.status} ${r.statusText}`);
+  const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += value;
+    let i;
+    while ((i = buf.indexOf("\n\n")) >= 0) {
+      const frame = buf.slice(0, i);
+      buf = buf.slice(i + 2);
+      const ev = /^event: (.*)$/m.exec(frame)?.[1];
+      const data = JSON.parse(/^data: (.*)$/m.exec(frame)?.[1] ?? "{}");
+      if (ev === final) return data as T;
+      if (ev === "error") throw new Error(data.detail ?? "error");
+      if (ev) onStage({ name: ev, ...data } as Stage);
+    }
+  }
+  throw new Error("스트림이 결과 없이 끝났습니다");
+}
+
 export const api = {
   health: () => req<Health>("/api/health"),
   sources: (refresh = false) =>
@@ -27,38 +63,29 @@ export const api = {
   ask: (question: string, page_ids: string[]) =>
     req<Answer>("/api/ask", { method: "POST", body: JSON.stringify({ question, page_ids }) }),
   /** SSE: stage events while the pipeline runs, resolves with the final answer. */
-  askStream: async (
+  askStream: (
     question: string,
     page_ids: string[],
     onStage: (s: Stage) => void,
     signal?: AbortSignal,
-  ) => {
-    const r = await fetch("/api/ask/stream", {
-      method: "POST",
+    notes: Note[] = [],
+  ) =>
+    sse<Answer>(
+      "/api/ask/stream",
+      {
+        question,
+        page_ids,
+        notes: notes
+          .filter((n) => n.text.trim())
+          .slice(0, 50)
+          .map((n) => ({ id: n.id, title: n.title, text: n.text.slice(0, 20000), updated_at: n.updatedAt })),
+      },
+      "answer",
+      onStage,
       signal,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, page_ids }),
-    });
-    if (!r.ok || !r.body) throw new Error(`${r.status} ${r.statusText}`);
-    const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
-    let buf = "";
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += value;
-      let i;
-      while ((i = buf.indexOf("\n\n")) >= 0) {
-        const frame = buf.slice(0, i);
-        buf = buf.slice(i + 2);
-        const ev = /^event: (.*)$/m.exec(frame)?.[1];
-        const data = JSON.parse(/^data: (.*)$/m.exec(frame)?.[1] ?? "{}");
-        if (ev === "answer") return data as Answer;
-        if (ev === "error") throw new Error(data.detail ?? "error");
-        if (ev) onStage({ name: ev, ...data } as Stage);
-      }
-    }
-    throw new Error("스트림이 답변 없이 끝났습니다");
-  },
+    ),
+  studio: (kind: StudioKind, page_ids: string[], topic: string, onStage: (s: Stage) => void, signal?: AbortSignal) =>
+    sse<StudioResult>("/api/studio/stream", { kind, page_ids, topic }, "result", onStage, signal),
   agent: (question: string, thread_id?: string) =>
     req<AgentRun>("/api/agent", { method: "POST", body: JSON.stringify({ question, thread_id }) }),
   resume: (thread_id: string, approved: boolean, args?: Record<string, unknown>) =>

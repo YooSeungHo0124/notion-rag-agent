@@ -51,6 +51,7 @@ class Services:
     agent: Any | None = None  # notion_agent.agent.graph.NotionAgent
     pages: Any | None = None  # notion_agent.api.pages.PageLoader
     images: Any | None = None  # notion_agent.qa.images.ImageService
+    studio: Any | None = None  # notion_agent.qa.studio.Studio
     last_sync: Callable[[], str | None] = lambda: None
 
 
@@ -144,10 +145,35 @@ def read_last_sync(state_db: Path) -> str | None:
 # --- request models --------------------------------------------------------------------------
 
 
+class NoteIn(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
+    title: str = Field(default="", max_length=200)
+    text: str = Field(min_length=1, max_length=20_000)
+    updated_at: str | None = None
+
+
 class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     page_ids: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
+    notes: list[NoteIn] = Field(default_factory=list, max_length=50)
+
+
+def notes_to_hits(notes: list[NoteIn]) -> list[Any]:
+    """User memos (kept in the browser) as pseudo-hits with page_id 'note:<id>'."""
+    from notion_agent.rag.retriever import Hit
+
+    out = []
+    for n in notes:
+        try:
+            ts = datetime.fromisoformat(n.updated_at) if n.updated_at else datetime.now(UTC)
+        except ValueError:
+            ts = datetime.now(UTC)
+        out.append(Hit(chunk_id=f"note:{n.id}", page_id=f"note:{n.id}",
+                       page_title=f"메모: {n.title or n.text[:30]}", page_url="", path=["내 메모"],
+                       text=n.text[:4000], last_edited_time=ts, fusion_score=0.0,
+                       rerank_score=0.0))
+    return out
 
 
 class AgentRequest(BaseModel):
@@ -164,6 +190,12 @@ class ResumeRequest(BaseModel):
 class ImagesRequest(BaseModel):
     sources: list[dict[str, Any]] = Field(default_factory=list)  # {page_id, block_ids}
     sentences: list[dict[str, Any]] = Field(default_factory=list)  # {text, citations, type}
+
+
+class StudioRequest(BaseModel):
+    kind: str
+    page_ids: list[str] = Field(default_factory=list, max_length=2000)
+    topic: str = Field(default="", max_length=300)
 
 
 class SyncRequest(BaseModel):
@@ -248,7 +280,8 @@ def create_app(
             raise HTTPException(status_code=503, detail="서버가 바쁩니다")
         try:
             t0 = time.perf_counter()
-            ans = svc.qa.answer(req.question.strip(), filters=filters)
+            ans = svc.qa.answer(req.question.strip(), filters=filters,
+                                extra=notes_to_hits(req.notes))
             out = answer_to_json(ans)
             out["total_ms"] = int((time.perf_counter() - t0) * 1000)
             return out
@@ -344,7 +377,8 @@ def create_app(
                 try:
                     t0 = time.perf_counter()
                     ans = svc.qa.answer(req.question.strip(), filters=filters,
-                                        on_event=lambda e, d: q.put((e, d)))
+                                        on_event=lambda e, d: q.put((e, d)),
+                                        extra=notes_to_hits(req.notes))
                     out = answer_to_json(ans)
                     out["total_ms"] = int((time.perf_counter() - t0) * 1000)
                     q.put(("answer", out))
@@ -354,6 +388,56 @@ def create_app(
                 q.put(("error", {"detail": e.detail}))
             except Exception as e:  # noqa: BLE001 - reported to the client
                 log.exception("ask stream failed")
+                q.put(("error", {"detail": f"{type(e).__name__}: {e}"}))
+            finally:
+                q.put(None)
+
+        threading.Thread(target=work, daemon=True).start()
+
+        def events() -> Iterator[str]:
+            while (item := q.get()) is not None:
+                name, data = item
+                yield f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(events(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache"})
+
+    @app.post("/api/studio/stream")
+    def studio_stream(req: StudioRequest) -> StreamingResponse:
+        """Studio document over a scope (SSE: collecting -> generating -> verifying -> result).
+        The store lock is held only to collect chunks and to verify, not during the LLM call."""
+        from notion_agent.qa.studio import KINDS, result_to_json
+
+        if req.kind not in KINDS:
+            raise HTTPException(422, f"unknown kind: {req.kind}")
+        q: queue.Queue[tuple[str, Any] | None] = queue.Queue()
+        emit = lambda e, d: q.put((e, d))  # noqa: E731
+
+        def locked(fn: Callable[[], Any]) -> Any:
+            if st.sync.running:
+                raise HTTPException(409, "동기화 중입니다. 끝난 뒤 다시 시도하세요")
+            if not st.lock.acquire(timeout=ASK_LOCK_TIMEOUT_S):
+                raise HTTPException(503, "서버가 바쁩니다")
+            try:
+                return fn()
+            finally:
+                st.lock.release()
+
+        def work() -> None:
+            try:
+                svc = st.require()
+                if svc.studio is None:
+                    raise HTTPException(501, "studio not configured")
+                emit("collecting", {})
+                hits, cov = locked(lambda: svc.studio.material(req.page_ids, req.topic))
+                emit("collected", {"chunks": len(hits), **cov.__dict__})
+                r = svc.studio.generate(req.kind, hits, cov, emit)
+                r = locked(lambda: svc.studio.verify(r, hits, emit))
+                q.put(("result", result_to_json(r)))
+            except HTTPException as e:
+                q.put(("error", {"detail": e.detail}))
+            except Exception as e:  # noqa: BLE001 - reported to the client
+                log.exception("studio failed")
                 q.put(("error", {"detail": f"{type(e).__name__}: {e}"}))
             finally:
                 q.put(None)
@@ -485,9 +569,16 @@ def load_real_services() -> Services:
         live = live_fetcher(NotionReader.from_settings(s))
         images = ImageService(NotionReader.from_settings(s), qa.verifier)
 
+    from notion_agent.llm.claude_cli import ClaudeCLIClient
+    from notion_agent.qa.studio import Studio
+
+    studio_llm = ClaudeCLIClient(model=s.llm_model, timeout_s=480, max_retries=1) \
+        if s.llm_provider == "claude_cli" else qa.llm
+
     return Services(
         store=retriever.store,
         qa=qa,
+        studio=Studio(qa, studio_llm),
         agent=build_agent(s, qa),
         pages=PageLoader(live, index_fetcher(retriever.store)),
         images=images,

@@ -263,6 +263,8 @@ export default function AnswerBody({ a, images = [] }: { a: Answer; images?: Ans
     run = [];
   };
   a.sentences.forEach((s, j) => {
+    // a text block that opens with a bold topic ("**주제** — ...") or "Q." starts its own line
+    if ((!s.type || s.type === "text") && /^(\*\*|Q\.\s)/.test(s.text)) flush();
     if (!s.type || s.type === "text") run.push(s);
     else {
       flush();

@@ -21,6 +21,7 @@ from notion_agent.llm.base import LLMClient, LLMError, LLMResponse
 from notion_agent.observability.tracing import span
 
 DEFAULT_SYSTEM = "You are a helpful assistant."
+STDIN_THRESHOLD = 100_000
 
 
 class ClaudeCLIClient(LLMClient):
@@ -42,10 +43,8 @@ class ClaudeCLIClient(LLMClient):
     def build_command(
         self, prompt: str, system: str | None, json_schema: dict[str, Any] | None
     ) -> list[str]:
-        cmd = [
-            self.binary,
-            "-p",
-            prompt,
+        # argv strings are capped at 128 KiB (MAX_ARG_STRLEN); long prompts go via stdin
+        cmd = [self.binary, "-p"] + ([] if self._via_stdin(prompt) else [prompt]) + [
             "--output-format",
             "json",
             "--model",
@@ -60,6 +59,10 @@ class ClaudeCLIClient(LLMClient):
         if json_schema is not None:
             cmd += ["--json-schema", json.dumps(json_schema, ensure_ascii=False)]
         return cmd
+
+    @staticmethod
+    def _via_stdin(prompt: str) -> bool:
+        return len(prompt.encode()) > STDIN_THRESHOLD
 
     def complete(
         self,
@@ -87,7 +90,8 @@ class ClaudeCLIClient(LLMClient):
             start = time.monotonic()
             try:
                 proc = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=self.timeout_s, check=False
+                    cmd, capture_output=True, text=True, timeout=self.timeout_s, check=False,
+                    input=prompt if self._via_stdin(prompt) else None,
                 )
                 return self._parse(proc, json_schema, int((time.monotonic() - start) * 1000))
             except (subprocess.TimeoutExpired, LLMError) as exc:
