@@ -143,5 +143,30 @@ def test_rounded_numbers_accepted_but_invented_rejected():
     from notion_agent.qa.grounded import _num_in
 
     src = {"771.8", "1.38", "20"}
-    assert _num_in("772", src) and _num_in("771", src) and _num_in("1.4", src) and _num_in("20", src)
+    assert all(_num_in(n, src) for n in ("772", "771", "1.4", "20"))
     assert not _num_in("770", src) and not _num_in("21", src) and not _num_in("1.5", src)
+
+
+def test_summary_heading_callout_flow_and_followups():
+    hits = [hit(1, "camera stream goes to decoder then yolo then event server")]
+    llm = StubLLM({"answerable": True, "followups": ["a?", "b?", "c?", "d?"], "blocks": [
+        {"type": "summary", "text": "camera stream goes to decoder then yolo",
+         "citations": ["S1"]},
+        {"type": "heading", "text": "구조", "citations": []},
+        {"type": "flow", "nodes": ["camera", "decoder", "yolo", "event server"],
+         "node_notes": ["stream"], "citations": ["S1"]},
+        {"type": "callout", "level": "bogus", "text": "event server then yolo",
+         "citations": ["S1"]},
+        {"type": "flow", "nodes": ["only one"], "citations": ["S1"]},  # unusable -> dropped
+    ]})
+    a = GroundedQA(StubRetriever(hits), llm, OverlapVerifier()).answer("pipeline?")
+    assert [s.type for s in a.sentences] == ["summary", "heading", "flow", "callout"]
+    head, flow, call = a.sentences[1], a.sentences[2], a.sentences[3]
+    assert head.support == "supported" and head.citations == []
+    assert flow.data["notes"] == ["stream", "", "", ""]
+    assert "camera(stream) → decoder" in flow.text
+    assert call.data["level"] == "note"
+    assert a.followups == ["a?", "b?", "c?"]
+    # heading is structure, not a claim: excluded from the supported ratio
+    assert a.supported_ratio == sum(s.support == "supported" for s in a.sentences if
+                                    s.type != "heading") / 3

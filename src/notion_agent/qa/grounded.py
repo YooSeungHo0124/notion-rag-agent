@@ -40,8 +40,18 @@ SYSTEM_PROMPT = """너는 사용자의 개인 노션 기록만을 근거로 답�
 - 질문이 묻는 항목(수치·원인·방법)을 소스에 있는 범위에서 빠짐없이 답한다. 질문과 무관한 부가 설명은 덧붙이지 않는다.
 - 질문과 같은 언어로 간결하게 답한다. URL은 쓰지 않는다.
 
-출력은 blocks 배열이다. 내용에 맞는 형태를 고른다(대부분은 text면 충분하다):
-- text  : 한 문장. text 필드. 문장마다 별도 블록.
+출력은 blocks 배열이다. 좋은 답변의 구성:
+1) 첫 블록은 summary: 질문에 대한 결론 1~2문장(가장 중요한 값/답을 바로).
+2) 그 다음 상세. 답이 길고 주제가 둘 이상이면 heading으로 구획을 나눈다(짧은 답에는 heading 쓰지 않는다).
+3) 기록끼리 값이 다르거나, 기록이 오래됐거나, 질문 일부는 기록에 없으면 callout으로 알린다.
+4) followups: 이 답을 본 사용자가 이어서 물어볼 만한 질문 2~3개(내 노트로 답할 수 있을 법한 것).
+
+블록 종류:
+- summary : 결론 1~2문장. text 필드.
+- heading : 짧은 소제목. text 필드. citations는 빈 배열.
+- text    : 한 문장. text 필드. 문장마다 별도 블록. 핵심어는 **굵게**, 명령어·파일명·변수는 `코드`로 감싼다.
+- callout : level("note"|"warning"|"conflict") + text. 주의·불일치·한계 안내.
+- flow    : 구성요소 간 흐름/구조. nodes(순서대로 3~7개 짧은 이름), 각 노드 설명은 node_notes(같은 길이, 짧게).
 - table : 여러 항목을 같은 기준으로 비교할 때. columns(헤더), rows(문자열 2차원 배열).
 - steps : 순서가 있는 절차. items(단계 문자열 배열).
 - code  : 명령어·코드·설정 파일. lang, code. 소스에 있는 그대로 옮긴다.
@@ -53,12 +63,18 @@ ANSWER_SCHEMA = {
     "type": "object",
     "properties": {
         "answerable": {"type": "boolean"},
+        "followups": {"type": "array", "items": {"type": "string"}},
         "blocks": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
-                    "type": {"type": "string", "enum": ["text", "table", "steps", "code", "chart"]},
+                    "type": {"type": "string", "enum": [
+                        "summary", "heading", "text", "callout", "table", "steps", "code",
+                        "chart", "flow"]},
+                    "level": {"type": "string", "enum": ["note", "warning", "conflict"]},
+                    "nodes": {"type": "array", "items": {"type": "string"}},
+                    "node_notes": {"type": "array", "items": {"type": "string"}},
                     "citations": {"type": "array", "items": {"type": "string"}},
                     "text": {"type": "string"},
                     "columns": {"type": "array", "items": {"type": "string"}},
@@ -76,12 +92,13 @@ ANSWER_SCHEMA = {
             },
         },
     },
-    "required": ["answerable", "blocks"],
+    "required": ["answerable", "blocks", "followups"],
     "additionalProperties": False,
 }
 
 
-BLOCK_TYPES = ("text", "table", "steps", "code", "chart")
+BLOCK_TYPES = ("summary", "heading", "text", "callout", "table", "steps", "code", "chart", "flow")
+UNVERIFIED_TYPES = ("heading",)  # structure only, makes no claim
 
 
 @dataclass
@@ -128,9 +145,21 @@ def _num_in(n: str, src: set[str]) -> bool:
 def block_payload(b: dict) -> tuple[str, dict] | None:
     """Validate a raw LLM block -> (plain text, component data); None if unusable."""
     t = b.get("type", "text")
-    if t == "text":
+    if t in ("text", "summary", "heading"):
         txt = (b.get("text") or "").strip()
         return (txt, {}) if txt else None
+    if t == "callout":
+        txt = (b.get("text") or "").strip()
+        lvl = b.get("level") if b.get("level") in ("note", "warning", "conflict") else "note"
+        return (txt, {"level": lvl}) if txt else None
+    if t == "flow":
+        nodes = [n.strip() for n in b.get("nodes") or [] if n.strip()][:8]
+        if len(nodes) < 2:
+            return None
+        notes = [(x or "").strip() for x in (b.get("node_notes") or [])][: len(nodes)]
+        notes += [""] * (len(nodes) - len(notes))
+        txt = " → ".join(f"{n}({m})" if m else n for n, m in zip(nodes, notes, strict=True))
+        return txt, {"nodes": nodes, "notes": notes}
     if t == "table":
         cols, rows = b.get("columns") or [], [r for r in b.get("rows") or [] if r]
         if not cols or not rows:
@@ -167,6 +196,7 @@ class Answer:
     supported_ratio: float = 0.0
     dropped_citations: int = 0  # citations to ids we never provided
     latency_ms: int = 0
+    followups: list[str] = field(default_factory=list)
 
 
 def _format_sources(hits: list[Hit]) -> str:
@@ -238,7 +268,9 @@ class GroundedQA:
         if not data.get("answerable") or not raw:
             return Answer(question, False, retrieval_score=top, latency_ms=resp.latency_ms)
         emit("verifying", {"blocks": len(raw)})
-        return self._verify(question, raw, hits, top, resp.latency_ms)
+        a = self._verify(question, raw, hits, top, resp.latency_ms)
+        a.followups = [f.strip() for f in data.get("followups") or [] if f.strip()][:3]
+        return a
 
     def _verify(
         self, question: str, raw: list[dict], hits: list[Hit], top: float, latency_ms: int
@@ -263,6 +295,9 @@ class GroundedQA:
             text, bdata = parsed
             btype = item.get("type", "text")
             score = 0.0
+            if btype in UNVERIFIED_TYPES:
+                sentences.append(Sentence(text, [], "supported", 1.0, btype, bdata))
+                continue
             if ids:
                 score = max(self.verifier.score(text[:2000], [hits[i - 1].text for i in ids]))
             note = ""
@@ -300,7 +335,7 @@ class GroundedQA:
         # chart is judged together with that block instead of on its own
         for prev, nxt in zip(sentences, sentences[1:], strict=False):
             if (prev.type == "text" and nxt.type != "text" and len(prev.text) <= 60
-                    and prev.support_score < nxt.support_score):
+                    and nxt.type not in UNVERIFIED_TYPES and prev.support_score < nxt.support_score):
                 prev.support_score, prev.support = nxt.support_score, nxt.support
                 prev.citations = prev.citations or list(nxt.citations)
                 for i in prev.citations:
@@ -312,8 +347,9 @@ class GroundedQA:
         for s in sentences:
             s.citations = [remap[i] for i in s.citations]
 
-        supported = sum(s.support == "supported" for s in sentences)
-        ratio = supported / len(sentences) if sentences else 0.0
+        claims = [s for s in sentences if s.type not in UNVERIFIED_TYPES]
+        supported = sum(s.support == "supported" for s in claims)
+        ratio = supported / len(claims) if claims else 0.0
         return Answer(
             question=question,
             answerable=True,

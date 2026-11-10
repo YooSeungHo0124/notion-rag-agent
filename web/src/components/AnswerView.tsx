@@ -66,6 +66,28 @@ export function answerPlainText(a: Answer): string {
 
 type BlockProps = { s: Sentence; a: Answer };
 
+/** Minimal, safe inline markdown: **bold** and `code` only (no HTML, no links). */
+function Inline({ text }: { text: string }) {
+  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
+  return (
+    <>
+      {parts.map((p, i) =>
+        p.startsWith("**") && p.endsWith("**") && p.length > 4 ? (
+          <strong key={i} className="font-semibold text-stone-900 dark:text-stone-50">
+            {p.slice(2, -2)}
+          </strong>
+        ) : p.startsWith("`") && p.endsWith("`") && p.length > 2 ? (
+          <code key={i} className="rounded bg-stone-100 px-1 py-0.5 font-mono text-[0.85em] dark:bg-stone-800">
+            {p.slice(1, -1)}
+          </code>
+        ) : (
+          <span key={i}>{p}</span>
+        ),
+      )}
+    </>
+  );
+}
+
 function supportCls(s: Sentence): string {
   return s.support === "unsupported" ? "unsupported" : s.support === "partial" ? "partial" : "";
 }
@@ -125,7 +147,7 @@ function TableBlock({ s, a }: BlockProps) {
               <tr key={i} className="odd:bg-stone-50/60 dark:odd:bg-stone-800/40">
                 {r.map((c, j) => (
                   <td key={j} className="px-2 py-1.5 align-top">
-                    {c}
+                    <Inline text={c} />
                   </td>
                 ))}
               </tr>
@@ -146,7 +168,9 @@ function StepsBlock({ s, a }: BlockProps) {
             <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-xs font-semibold text-white">
               {i + 1}
             </span>
-            <span className="pt-0.5">{it}</span>
+            <span className="pt-0.5">
+              <Inline text={it} />
+            </span>
           </li>
         ))}
       </ol>
@@ -211,7 +235,75 @@ function ChartBlock({ s, a }: BlockProps) {
   );
 }
 
+function SummaryBlock({ s, a }: BlockProps) {
+  return (
+    <div className="rounded-xl border-l-4 border-indigo-500 bg-indigo-50/60 px-4 py-3 dark:bg-indigo-950/30">
+      <p className={`text-[15px] font-medium leading-7 ${supportCls(s)}`} title={supportTitle(s)}>
+        <Inline text={s.text} />
+        <Cites s={s} a={a} />
+      </p>
+    </div>
+  );
+}
+
+function HeadingBlock({ s }: BlockProps) {
+  return <h3 className="pt-2 text-base font-semibold text-stone-900 dark:text-stone-50">{s.text}</h3>;
+}
+
+const CALLOUT = {
+  note: { icon: "ℹ", label: "참고", cls: "border-sky-300 bg-sky-50 text-sky-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-100" },
+  warning: { icon: "⚠", label: "주의", cls: "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100" },
+  conflict: { icon: "⇄", label: "기록 불일치", cls: "border-rose-300 bg-rose-50 text-rose-900 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-100" },
+};
+
+function CalloutBlock({ s, a }: BlockProps) {
+  const c = CALLOUT[s.data?.level ?? "note"] ?? CALLOUT.note;
+  return (
+    <div className={`flex gap-3 rounded-xl border px-4 py-3 text-sm ${c.cls}`} role="note">
+      <span aria-hidden className="text-base leading-6">
+        {c.icon}
+      </span>
+      <div className="leading-6">
+        <span className="mr-1.5 font-semibold">{c.label}</span>
+        <span className={supportCls(s)} title={supportTitle(s)}>
+          <Inline text={s.text} />
+        </span>
+        <Cites s={s} a={a} />
+      </div>
+    </div>
+  );
+}
+
+function FlowBlock({ s, a }: BlockProps) {
+  const nodes = s.data?.nodes ?? [];
+  const notes = s.data?.notes ?? [];
+  return (
+    <BlockFrame s={s} a={a} label="흐름">
+      <ol className="flex flex-col items-stretch gap-1 sm:flex-row sm:flex-wrap sm:items-center">
+        {nodes.map((n, i) => (
+          <li key={i} className="flex flex-col items-center gap-1 sm:flex-row">
+            <div className="min-w-[7rem] rounded-lg border border-stone-200 bg-white px-3 py-2 text-center shadow-sm dark:border-stone-700 dark:bg-stone-800">
+              <div className="text-sm font-semibold">{n}</div>
+              {notes[i] && <div className="mt-0.5 text-[11px] text-stone-500">{notes[i]}</div>}
+            </div>
+            {i < nodes.length - 1 && (
+              <span aria-hidden className="px-1 text-stone-400">
+                <span className="sm:hidden">↓</span>
+                <span className="hidden sm:inline">→</span>
+              </span>
+            )}
+          </li>
+        ))}
+      </ol>
+    </BlockFrame>
+  );
+}
+
 const REGISTRY: Record<string, (p: BlockProps) => React.ReactElement> = {
+  summary: SummaryBlock,
+  heading: HeadingBlock,
+  callout: CalloutBlock,
+  flow: FlowBlock,
   table: TableBlock,
   steps: StepsBlock,
   code: CodeBlock,
@@ -224,7 +316,7 @@ function TextRun({ items, a }: { items: Sentence[]; a: Answer }) {
       {items.map((s, i) => (
         <span key={i}>
           <span className={supportCls(s)} title={supportTitle(s)}>
-            {s.text}
+            <Inline text={s.text} />
           </span>
           <Cites s={s} a={a} />{" "}
         </span>
@@ -254,7 +346,27 @@ function Blocks({ a }: { a: Answer }) {
   return <div className="space-y-3">{out}</div>;
 }
 
-export default function AnswerView({ a }: { a: Answer }) {
+function CopyAnswer({ a }: { a: Answer }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(answerPlainText(a));
+          setDone(true);
+          setTimeout(() => setDone(false), 1500);
+        } catch {
+          /* clipboard blocked */
+        }
+      }}
+      className="text-xs text-stone-400 hover:text-indigo-600"
+    >
+      {done ? "복사됨" : "⧉ 답변 복사"}
+    </button>
+  );
+}
+
+export default function AnswerView({ a, onFollowup }: { a: Answer; onFollowup?: (q: string) => void }) {
   if (!a.answerable) return <Abstained score={a.retrieval_score} />;
   const nSup = a.sentences.filter((s) => s.support === "supported").length;
   const badge = BADGE[a.confidence];
@@ -296,7 +408,27 @@ export default function AnswerView({ a }: { a: Answer }) {
           </ol>
         </div>
       )}
-      <p className="text-[11px] text-stone-400">{DISCLAIMER}</p>
+      {onFollowup && (a.followups?.length ?? 0) > 0 && (
+        <div>
+          <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-stone-500">이어서 물어보기</h4>
+          <div className="flex flex-col gap-1.5">
+            {a.followups!.map((f) => (
+              <button
+                key={f}
+                onClick={() => onFollowup(f)}
+                className="flex items-center justify-between rounded-lg border border-stone-200 px-3 py-2 text-left text-sm hover:border-indigo-300 hover:bg-indigo-50 dark:border-stone-700 dark:hover:bg-indigo-950/40"
+              >
+                <span>{f}</span>
+                <span aria-hidden className="text-stone-400">↗</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="flex items-center gap-3">
+        <CopyAnswer a={a} />
+        <p className="text-[11px] text-stone-400">{DISCLAIMER}</p>
+      </div>
     </div>
   );
 }
