@@ -14,6 +14,7 @@ import logging
 import sqlite3
 import threading
 import time
+import uuid
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -28,8 +29,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from notion_agent.ingest.sync import SyncReport
-from notion_agent.qa.grounded import Answer, GroundedQA
-from notion_agent.rag.retriever import Hit
+from notion_agent.qa.grounded import GroundedQA
+from notion_agent.qa.serialize import answer_to_json, hit_to_json  # noqa: F401 (re-export)
 from notion_agent.rag.store import QdrantStore, SearchFilters
 
 log = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ class Services:
     store: QdrantStore
     qa: GroundedQA
     run_sync: Callable[[bool], SyncReport] | None = None  # arg: full
+    agent: Any | None = None  # notion_agent.agent.graph.NotionAgent
     last_sync: Callable[[], str | None] = lambda: None
 
 
@@ -83,44 +85,6 @@ class AppState:
 
 
 # --- serialisation ---------------------------------------------------------------------------
-
-
-def hit_to_json(h: Hit) -> dict[str, Any]:
-    return {
-        "chunk_id": h.chunk_id,
-        "page_id": h.page_id,
-        "title": h.page_title,
-        "path": h.path,
-        "heading_path": h.heading_path,
-        "cite_url": h.cite_url,
-        "page_url": h.page_url,
-        "text": h.text,
-        "tags": h.tags,
-        "last_edited_time": h.last_edited_time.isoformat(),
-        "rerank_score": round(h.rerank_score, 4),
-    }
-
-
-def answer_to_json(a: Answer) -> dict[str, Any]:
-    return {
-        "question": a.question,
-        "answerable": a.answerable,
-        "sentences": [
-            {
-                "text": s.text,
-                "citations": s.citations,
-                "support": s.support,
-                "support_score": round(s.support_score, 4),
-            }
-            for s in a.sentences
-        ],
-        "sources": [hit_to_json(h) for h in a.sources],
-        "confidence": a.confidence,
-        "retrieval_score": round(a.retrieval_score, 4),
-        "supported_ratio": round(a.supported_ratio, 4),
-        "dropped_citations": a.dropped_citations,
-        "latency_ms": a.latency_ms,
-    }
 
 
 def scan_sources(store: QdrantStore) -> list[dict[str, Any]]:
@@ -180,6 +144,17 @@ class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     page_ids: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
+
+
+class AgentRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+    thread_id: str | None = None
+
+
+class ResumeRequest(BaseModel):
+    thread_id: str
+    approved: bool
+    args: dict[str, Any] | None = None
 
 
 class SyncRequest(BaseModel):
@@ -275,6 +250,29 @@ def create_app(
     async def ask(req: AskRequest) -> dict[str, Any]:
         return await run_in_threadpool(_ask, req)
 
+    def _agent_call(fn: Callable[[Any], dict[str, Any]]) -> dict[str, Any]:
+        svc = st.require()
+        if svc.agent is None:
+            raise HTTPException(status_code=501, detail="agent not configured")
+        if st.sync.running:
+            raise HTTPException(status_code=409, detail="동기화 중입니다. 끝난 뒤 다시 시도하세요")
+        if not st.lock.acquire(timeout=ASK_LOCK_TIMEOUT_S):
+            raise HTTPException(status_code=503, detail="서버가 바쁩니다")
+        try:
+            return fn(svc.agent)
+        finally:
+            st.lock.release()
+
+    @app.post("/api/agent")
+    async def agent_run(req: AgentRequest) -> dict[str, Any]:
+        tid = req.thread_id or uuid.uuid4().hex
+        return await run_in_threadpool(_agent_call, lambda a: a.run(req.question.strip(), tid))
+
+    @app.post("/api/agent/resume")
+    async def agent_resume(req: ResumeRequest) -> dict[str, Any]:
+        return await run_in_threadpool(
+            _agent_call, lambda a: a.resume(req.thread_id, req.approved, req.args))
+
     def _run_sync(svc: Services, full: bool) -> None:
         assert svc.run_sync is not None
         try:
@@ -358,9 +356,12 @@ def load_real_services() -> Services:
         finally:
             state.close()
 
+    from notion_agent.agent.factory import build_agent
+
     return Services(
         store=retriever.store,
         qa=qa,
+        agent=build_agent(s, qa),
         run_sync=run_sync,
         last_sync=lambda: read_last_sync(s.state_db),
     )

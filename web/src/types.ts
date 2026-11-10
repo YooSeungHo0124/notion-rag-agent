@@ -72,3 +72,22 @@ export interface SavedNote {
   confidence?: Confidence;
   savedAt: string;
 }
+
+export interface AgentStep {
+  agent: string;
+  tool: string;
+  args: Record<string, unknown>;
+  ok: boolean;
+  observation: unknown;
+  ms: number;
+}
+
+export interface AgentRun {
+  thread_id: string;
+  status: "awaiting_approval" | "done";
+  approval: { tool: string; args: Record<string, unknown>; thought: string } | null;
+  steps: AgentStep[];
+  answer: (Answer & { kind: "answer" }) | { kind: "action"; steps: AgentStep[] } | null;
+  done_reason: string | null;
+  total_ms: number;
+}

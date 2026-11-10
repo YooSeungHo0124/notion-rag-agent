@@ -35,6 +35,29 @@ def ask(question: str, k: int = typer.Option(0, help="sources to retrieve (0 = c
 
 
 @app.command()
+def agent(question: str) -> None:
+    """LangGraph agent: plan -> tools -> grounded answer; asks before any Notion write."""
+    import json
+    import uuid
+
+    from notion_agent.agent.factory import build_agent
+    from notion_agent.qa.render import render_answer_json
+
+    ag = build_agent()
+    tid = uuid.uuid4().hex
+    r = ag.run(question, tid)
+    while r["status"] == "awaiting_approval":
+        ap = r["approval"]
+        console.print(f"[yellow]승인 필요[/yellow] {ap['tool']} "
+                      f"{json.dumps(ap['args'], ensure_ascii=False)}", markup=True)
+        r = ag.resume(tid, typer.confirm("실행할까요?", default=False))
+    for i, s in enumerate(r["steps"], 1):
+        console.print(f"[dim]{i}. {s['agent']}·{s['tool']} {s['args']} ok={s['ok']}[/dim]")
+    render_answer_json(console, r["answer"])
+    console.print(f"[dim]{r['done_reason']} · {r['total_ms']} ms[/dim]")
+
+
+@app.command()
 def doctor() -> None:
     """Check the local environment (LLM CLI, GPU, config)."""
     import shutil
