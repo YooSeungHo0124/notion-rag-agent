@@ -10,13 +10,28 @@ console = Console()
 
 
 @app.command()
-def ask(question: str) -> None:
-    """Ask the LLM directly (F0 smoke test; RAG comes in F2)."""
+def llm(prompt: str) -> None:
+    """Call the LLM directly, without retrieval (adapter smoke test)."""
     from notion_agent.llm import get_llm
 
-    resp = get_llm().complete(question)
+    resp = get_llm().complete(prompt)
     console.print(resp.text)
     console.print(f"[dim]{resp.model} · {resp.latency_ms} ms[/dim]")
+
+
+@app.command()
+def ask(question: str, k: int = typer.Option(0, help="sources to retrieve (0 = config)")) -> None:
+    """Answer from my Notion with citations and a grounding check."""
+    from notion_agent.llm import get_llm
+    from notion_agent.qa.grounded import GroundedQA
+    from notion_agent.qa.render import render_answer
+    from notion_agent.rag.factory import build_retriever, build_verifier
+
+    retriever = build_retriever()
+    if k:
+        retriever.cfg = retriever.cfg.model_copy(update={"final_k": k})
+    qa = GroundedQA(retriever, get_llm(), build_verifier())
+    render_answer(console, qa.answer(question))
 
 
 @app.command()
@@ -63,7 +78,7 @@ def sync(
         raise typer.Exit(1) from exc
 
     if dry_run:
-        sink = PrintSink(console.print)
+        sink = PrintSink(lambda msg: console.print(msg, markup=False, highlight=False))
     else:
         try:
             from notion_agent.rag.factory import build_sink

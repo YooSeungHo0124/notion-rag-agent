@@ -43,7 +43,10 @@ class NotionPage(BaseModel):
 
 
 def block_url(page_id: str, block_id: str) -> str:
-    return f"https://www.notion.so/{page_id.replace('-', '')}#{block_id.replace('-', '')}"
+    base = f"https://www.notion.so/{page_id.replace('-', '')}"
+    if block_id.replace("-", "") == page_id.replace("-", ""):  # synthetic properties block
+        return base
+    return f"{base}#{block_id.replace('-', '')}"
 
 
 class Chunk(BaseModel):

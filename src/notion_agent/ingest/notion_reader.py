@@ -69,6 +69,55 @@ def extract_tags(page: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(tags))
 
 
+def _prop_value(prop: dict[str, Any]) -> str:
+    """Plain-text value of one database property ('' when empty or not textual)."""
+    t = prop.get("type")
+    v = prop.get(t) if t else None
+    if v in (None, "", [], {}):
+        return ""
+    match t:
+        case "rich_text":
+            return rich_text(v).strip()
+        case "number":
+            return str(v)
+        case "select" | "status":
+            return v.get("name", "")
+        case "multi_select":
+            return ", ".join(o.get("name", "") for o in v)
+        case "date":
+            return v.get("start", "") + (f" ~ {v['end']}" if v.get("end") else "")
+        case "checkbox":
+            return "예" if v else "아니오"
+        case "url" | "email" | "phone_number":
+            return str(v)
+        case "people":
+            return ", ".join(p.get("name", "") for p in v if p.get("name"))
+        case "formula":
+            ft = v.get("type")
+            inner = v.get(ft)
+            if isinstance(inner, dict):
+                return inner.get("start", "")
+            return "" if inner is None else str(inner)
+        case "relation":
+            return f"{len(v)}개 연결"
+    return ""
+
+
+def properties_to_text(page: dict[str, Any]) -> str:
+    """Database-row properties as 'name: value' lines (title excluded, empty skipped).
+
+    Many database rows keep their content only in properties, with an empty body.
+    """
+    lines = []
+    for name, prop in (page.get("properties") or {}).items():
+        if prop.get("type") == "title":
+            continue
+        value = _prop_value(prop)
+        if value:
+            lines.append(f"{name}: {value}")
+    return "\n".join(lines)
+
+
 def _parse_dt(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
@@ -302,16 +351,23 @@ class NotionReader:
         self, page: dict[str, Any], path: list[str], *, with_blocks: bool = True
     ) -> NotionPage:
         archived = bool(page.get("archived") or page.get("in_trash"))
+        blocks: list[Block] = []
+        if with_blocks and not archived:
+            props = properties_to_text(page)
+            if props:
+                # synthetic block; its id is the page id so citations link to the page itself
+                blocks.append(Block(block_id=page["id"], type="properties", text=props))
+            blocks.extend(self.fetch_blocks(page["id"]))
         return NotionPage(
             page_id=page["id"],
-            title=extract_title(page),
+            title=extract_title(page) or "(제목 없음)",
             url=page.get("url") or f"https://www.notion.so/{page['id'].replace('-', '')}",
             path=[p for p in path if p],
             tags=extract_tags(page),
             created_time=_parse_dt(page["created_time"]),
             last_edited_time=_parse_dt(page["last_edited_time"]),
             archived=archived,
-            blocks=self.fetch_blocks(page["id"]) if with_blocks and not archived else [],
+            blocks=blocks,
         )
 
     def iter_pages(self) -> Iterator[NotionPage]:

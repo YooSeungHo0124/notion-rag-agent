@@ -65,3 +65,10 @@ def test_ids_deterministic():
     b = chunk_page(_page(), CFG)
     assert [c.chunk_id for c in a] == [c.chunk_id for c in b]
     assert len({c.chunk_id for c in a}) == len(a)
+
+
+def test_toggle_heading_label_is_first_line_only():
+    from notion_agent.rag.chunker import _heading_label
+
+    assert _heading_label("### `Version 2`\nargs.yaml\n```\ntask: detect\n```") == "`Version 2`"
+    assert len(_heading_label("## " + "가" * 200)) == 80
