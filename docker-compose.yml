@@ -20,3 +20,35 @@ services:
     environment:
       - PHOENIX_WORKING_DIR=/mnt/data
     restart: unless-stopped
+
+  # --- Demo ERP/CRM (Odoo Community + its own Postgres). Local only. ---
+  odoo-db:
+    image: postgres:16.4
+    environment:
+      - POSTGRES_USER=odoo
+      - POSTGRES_PASSWORD=${ODOO_DB_PASSWORD:-odoo}
+      - POSTGRES_DB=postgres
+    volumes:
+      - ./volumes/odoo-db:/var/lib/postgresql/data
+    networks: [erp]
+    restart: unless-stopped
+
+  odoo:
+    image: odoo:18.0
+    depends_on: [odoo-db]
+    environment:
+      - HOST=odoo-db
+      - USER=odoo
+      - PASSWORD=${ODOO_DB_PASSWORD:-odoo}
+    ports:
+      - "127.0.0.1:8069:8069"
+    volumes:
+      - odoo-data:/var/lib/odoo
+    networks: [erp]
+    restart: unless-stopped
+
+networks:
+  erp: {}
+
+volumes:
+  odoo-data: {}

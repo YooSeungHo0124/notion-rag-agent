@@ -22,6 +22,7 @@ NotebookLM의 경험을 내 노션 위에 직접 구현했습니다.
 | **스튜디오** | 선택한 범위의 노트를 통째로 읽고 **브리핑, 학습 가이드, FAQ, 타임라인, 마인드맵, 소스 가이드**를 만듭니다. 이 문서들도 답변과 같은 블록 검증을 거칩니다 |
 | **메모** | 노션에 없는 사실을 브라우저 메모로 적어 두면, 질문과 관련 있을 때만 출처로 함께 씁니다 |
 | **에이전트** | LangGraph로 여러 번 검색하고 페이지를 읽습니다. 노션에 쓰기 전에는 **반드시 사람의 승인**을 받습니다(인터럽트) |
+| **ERP·CRM** | 로컬 **Odoo**(ERP+CRM)에 연결해 거래처, 영업기회, 주문, 재고, 송장, 구매를 조회합니다. ERP 수치와 회사 문서를 **함께 인용해** 답하고, CRM에 기록할 때는 승인을 받습니다 |
 | **연동** | 읽기 전용 MCP 서버(`my-memory`)를 제공합니다. Claude Code 같은 MCP 클라이언트에서 내 노트를 검색할 수 있습니다 |
 | **측정** | 자체 평가 세트로 검색 정확도와 답변 정확도를 측정합니다. Phoenix로 모든 단계를 추적(tracing)합니다 |
 | **비용** | 답변 생성에는 **Claude 구독(`claude -p`)**을 쓰고, 임베딩과 재정렬은 **로컬 GPU** 모델로 돌립니다. 유료 API 키는 필요 없습니다 |
@@ -212,6 +213,37 @@ stateDiagram-v2
 - **메모를 출처로:** 메모는 브라우저에만 저장됩니다. 질문할 때 함께 보내면, 서버가 노션 조각과 같은 재정렬 모델로 점수를 매겨 **답변 가능 기준을 넘는 메모만(최대 2개)** 출처로 붙입니다. 출처 패널에는 "내 메모"로 표시됩니다. 범위를 지정한 질문에는 메모를 쓰지 않습니다.
 - **저장한 답변:** 노트 화면에서 모아 보고, 편집 가능한 메모로 옮길 수 있습니다.
 
+### 10. ERP·CRM 연동 (Odoo 데모)
+
+사내 ERP를 쓰는 상황을 재현하려고, 오픈소스 ERP인 **Odoo 18 Community**를 Docker로 띄웠습니다. 샘플 데이터(사무가구 회사)를 그대로 쓰고, 그 거래처 이름에 맞춘 **가상 회사 문서 8편**(할인 규정, 여신 규정, 재고 기준, 고객 미팅, 대리점 계약, 주간 회의, 제품 사양)을 `scenario/docs`에 두었습니다. 실제 노션에는 아무것도 쓰지 않습니다.
+
+```
+질문 ──▶ planner ──┬─▶ erp_* 도구 ──▶ Odoo XML-RPC (허용 목록 모델·필드만)
+                  │        └─ 조회 결과 → 출처(Hit, erp:…) 로 변환
+                  ├─▶ search_notes ──▶ 회사 문서·노트 (Qdrant)
+                  └─▶ erp_log_activity ─▶ [사람 승인] ─▶ CRM 활동 등록
+          writer ──▶ ERP 행 + 문서 조각을 함께 인용, 숫자는 ERP 행과 대조해 검증
+```
+
+| 설계 | 내용 |
+|---|---|
+| 읽기 도구 6개 | 거래처, 영업기회(확률 가중 합 포함), 판매주문(품목 포함), 재고, 송장·미수금, 구매주문 |
+| 접근 제한 | `READ_FIELDS` 허용 목록에 있는 모델·필드만 읽습니다. `res.users` 같은 모델은 요청해도 막힙니다 |
+| ERP 결과도 출처 | 조회 결과를 노트 조각과 같은 출처 형식으로 바꿉니다. 답변 속 금액이나 날짜가 조회한 행에 없으면 노트와 똑같이 검증에서 걸립니다 |
+| 쓰기는 하나뿐 | `erp_log_activity`(영업기회에 할 일 등록)만 있고, LangGraph 인터럽트로 **승인 카드**를 거칩니다. 삭제·수정 도구는 없습니다 |
+| 판단 질문 | "확정해도 돼?" 같은 질문은 규정(문서)과 그 규정이 보는 ERP 데이터(미수금, 재고 등)를 둘 다 조회하도록 플래너 규칙을 두었습니다 |
+
+**평가 (14문항, `eval/erp_eval.py`):** ERP만 필요한 질문 5개, 문서만 필요한 질문 4개, 둘 다 필요한 질문 3개, 기록에 없는 질문 2개로 구성했습니다. 규칙 기반으로 채점해, 정답 키워드와 필요한 출처 종류(ERP/문서)를 모두 갖춰야 통과입니다.
+
+| 버전 | 답변 정확 | 거절 정확 | 문장 근거율 | 평균 시간 | 바꾼 것 |
+|---|---|---|---|---|---|
+| v1 | 10/12 | 2/2 | 0.97 | 18.2초 | – |
+| v2 | 11/12 | 2/2 | 0.89 | 19.9초 | ERP 출처가 있으면 판단 근거가 된 레코드를 인용하라는 지시 추가. 채점 기준 1개 완화(ERP만으로도 맞는 답) |
+| v3 | 11/12 | 2/2 | 0.87 | 20.4초 | 판단 질문은 규정과 관련 ERP 데이터를 둘 다 조회하도록 플래너 규칙 추가 |
+| v4 | **12/12** | 2/2 | 0.97 | 18.6초 | 도구를 하나도 안 쓰고 끝내려 하면 플래너에게 한 번 다시 묻기 |
+
+문항이 14개뿐이라 v4의 만점은 "알려진 실패가 다 고쳐졌다" 정도로만 읽어야 합니다. 플래너가 매번 다른 길을 고르기도 해서, 실행할 때마다 1문항쯤은 달라질 수 있습니다.
+
 ---
 
 ## 평가
@@ -253,6 +285,7 @@ stateDiagram-v2
 | 벡터 DB | **Qdrant** (임베디드 모드, named vectors, 서버 측 RRF) | 의미 벡터와 키워드 벡터를 한 컬렉션에서 하이브리드 검색 |
 | 에이전트 | **LangGraph** 1.2 (interrupt, SQLite checkpointer) | 승인 대기와 재개를 그래프 상태로 안전하게 처리 |
 | 도구 호출 | 자체 `ToolRegistry` (pydantic → JSON 스키마) | 어떤 도구를 실행할지 LLM 제공자에 맡기지 않음. 승인 게이트를 우회할 수 없음 |
+| ERP·CRM | **Odoo 18 Community** + PostgreSQL 16 (Docker, 127.0.0.1만), 표준 XML-RPC | 실제 기업에서 쓰는 ERP의 API, 권한, 데이터 모델을 그대로 다루기 위해 |
 | MCP | **mcp** 2.x `MCPServer` (stdio, 읽기 전용) | 같은 레지스트리를 외부 클라이언트에 노출 |
 | 수집 | **notion-client** 3.1 (API 2025-09-03) | data sources 기반 최신 API |
 | 백엔드 | **FastAPI** + SSE, `uv`, Python 3.12 | 진행 단계 스트리밍, 단일 프로세스로 모델을 한 번만 로딩 |
@@ -272,16 +305,17 @@ src/notion_agent/
 ├── qa/            근거 기반 답변(grounded), 블록 검증, 스튜디오, 관련 이미지, 직렬화
 ├── agent/         LangGraph 그래프(planner/tools/approval/writer), factory
 ├── tools/         ToolRegistry + 내장 도구(검색·페이지·타임라인·쓰기·기억)
+├── erp/           Odoo 클라이언트(허용 목록) + ERP 도구 6개 + CRM 활동 쓰기(승인)
 ├── memory/        장기 기억(profile)
 ├── llm/           LLMClient, claude -p 어댑터
 ├── observability/ Phoenix/OTel tracing
 ├── api/           FastAPI(SSE, 페이지 뷰어, 이미지 프록시, 에이전트 재개)
 ├── mcp_server.py  읽기 전용 my-memory MCP
-└── cli.py         nra sync | ask | agent | serve | mcp | doctor
+└── cli.py         nra sync | index-docs | ask | agent | serve | mcp | doctor
 web/               React UI (사이드바 · 문서형 답변 · 스튜디오 · 노트 · 출처 패널)
 eval/              평가 데이터 생성 · 실행 · 청크 통계 · 결과(results.md)
 docs/              직무 분석 → 요구사항 → 스택 → 설계 문서 (01~09)
-tests/             76개 (가짜 LLM·임베딩으로 GPU 없이 실행)
+tests/             81개 (가짜 LLM·임베딩으로 GPU 없이 실행)
 ```
 
 ---
@@ -300,6 +334,14 @@ uv run nra sync --full
 # 2) 웹 UI
 (cd web && npm install && npm run build)
 uv run nra serve                # http://127.0.0.1:8000
+
+# 3) (선택) ERP·CRM 데모: Odoo + 가상 회사 문서
+docker compose up -d odoo-db odoo                # http://127.0.0.1:8069
+#    .env에 ODOO_URL / ODOO_DB / ODOO_USER / ODOO_PASSWORD 설정 후, Odoo에서 DB를 샘플 데이터와 함께 만들고
+#    crm · sale_management · stock · purchase · account 앱 설치
+uv run nra index-docs                            # scenario/docs 색인 (서버를 끈 상태에서)
+uv run nra agent "Acme Corporation 신규 주문을 지금 확정해도 돼?"
+uv run python eval/erp_eval.py --label mytest    # ERP 평가 (서버 실행 중)
 
 # 그 밖에
 uv run nra ask "OOM 났을 때 batch 몇으로 줄였지?"     # 터미널에서 질문

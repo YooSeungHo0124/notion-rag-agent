@@ -335,6 +335,11 @@ class GroundedQA:
 
         emit("generating", {})
         prompt = f"<sources>\n{_format_sources(hits)}\n</sources>\n\n질문: {question}"
+        if any(h.page_id.startswith("erp:") for h in hits):
+            prompt += (
+                "\n\n(ERP 출처가 있다. 규정·회의록으로 판단을 내릴 때도 그 판단의 근거가 되는"
+                " ERP 레코드(주문·송장 번호, 금액, 날짜)를 함께 적고 ERP 출처를 인용하라.)"
+            )
         sent = [0]
 
         def on_partial(buf: str) -> None:

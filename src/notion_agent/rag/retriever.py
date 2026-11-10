@@ -33,6 +33,8 @@ class Hit(BaseModel):
 
     @property
     def cite_url(self) -> str:
+        if ":" in self.page_id:  # note:/doc:/erp: sources are not Notion pages
+            return self.page_url
         return block_url(self.page_id, self.block_ids[0]) if self.block_ids else self.page_url
 
 

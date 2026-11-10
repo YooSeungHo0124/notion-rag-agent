@@ -33,5 +33,11 @@ def build_agent(
     profile = ProfileStore(data / "profile.sqlite")
     sink: dict = {}
     reg = build_registry(qa.retriever, notion, hit_sink=sink, profile=profile)
+    if s.odoo_url:
+        from notion_agent.erp.odoo import OdooClient, OdooConfig
+        from notion_agent.erp.tools import build_erp_tools
+
+        build_erp_tools(reg, OdooClient(OdooConfig(s.odoo_url, s.odoo_db, s.odoo_user,
+                                                   s.odoo_password)), sink)
     saver = SqliteSaver(sqlite3.connect(data / "agent_checkpoints.sqlite", check_same_thread=False))
     return NotionAgent(llm, reg, qa, sink, checkpointer=saver, profile=profile)

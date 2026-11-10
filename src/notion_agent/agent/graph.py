@@ -31,7 +31,7 @@ from notion_agent.tools.registry import ToolRegistry
 
 log = logging.getLogger(__name__)
 
-MAX_STEPS = 4
+MAX_STEPS = 5
 MAX_TURNS = 6
 
 PLANNER_SYSTEM = """너는 개인 노션 에이전트의 supervisor다. 사용자의 요청을 해결하기 위해 다음 행동 하나를 고른다.
@@ -46,6 +46,10 @@ PLANNER_SYSTEM = """너는 개인 노션 에이전트의 supervisor다. 사용�
 - 사용자가 명시적으로 노션에 기록/추가/생성을 요청한 경우에만 쓰기 도구를 쓴다.
 - 후속 질문('그거', '더 자세히')은 이전 대화를 참고해 검색어를 완성한다.
 - 사용자가 '기억해/앞으로는' 처럼 자신에 대한 사실·선호를 알려주면 remember 도구로 저장한다(노션 아님).
+- erp_* 도구가 있으면 회사 업무 데이터(거래처·영업기회·판매주문·재고·송장·구매)는 ERP에서 조회한다. 금액·수량·단계·날짜 같은 현재 수치는 문서가 아니라 ERP가 기준이다.
+- 회사 규정·회의록·고객 미팅 메모·계약 조건 같은 맥락은 search_notes로 찾는다. 질문이 수치와 맥락을 함께 요구하면(예: "A사 상황 정리", "규정상 문제 되는 건") 둘 다 조회한다.
+- '해도 돼?/가능해?/승인돼?' 같은 판단 질문은 관련 규정을 search_notes로 반드시 찾고, 규정이 보는 ERP 데이터(예: 주문 확정 → 거래처 미수금 erp_invoices, 할인 → 영업기회, 발주 → 재고)도 조회한다.
+- erp_log_activity(쓰기)는 사용자가 활동/할 일 등록을 명시적으로 요청했을 때만, 먼저 erp_pipeline으로 lead id를 확인한 뒤 쓴다.
 - 충분한 근거를 모았거나 더 할 일이 없으면 action="final".
 - args_json은 해당 도구 args의 JSON 문자열. final이면 "{{}}"."""
 
@@ -124,6 +128,11 @@ class NotionAgent:
         resp = self.llm.complete(prompt, system=system,
                                  json_schema=_plan_schema(list(self.reg.tools)))
         plan = resp.structured or {"action": "final", "args_json": "{}", "thought": "no plan"}
+        if plan["action"] == "final" and not steps:  # never answer without looking anything up
+            resp = self.llm.complete(
+                prompt + "\n\n(아직 어떤 도구도 쓰지 않았다. 근거 없이 끝내지 말고 가장 알맞은 조회 도구를 골라라.)",
+                system=system, json_schema=_plan_schema(list(self.reg.tools)))
+            plan = resp.structured or plan
         action = plan["action"]
         log.info("planner: %s %s | %s", action, plan.get("args_json"), plan.get("thought"))
         if action == "final":
@@ -158,8 +167,11 @@ class NotionAgent:
         else:
             r = self.reg.run(p.get("tool", ""), p.get("args") or {})
             obs, ok, ms = (r.output if r.ok else r.error), r.ok, r.latency_ms
-        agent = ("NotionOps" if tool and tool.write
-                 else "Memory" if p.get("tool") == "remember" else "Retriever")
+        name = p.get("tool", "") or ""
+        agent = ("ERPOps" if tool and tool.write and name.startswith("erp_")
+                 else "NotionOps" if tool and tool.write
+                 else "Memory" if name == "remember"
+                 else "ERP" if name.startswith("erp_") else "Retriever")
         step = {"agent": agent, "tool": p.get("tool"), "args": p.get("args"), "ok": ok,
                 "observation": obs, "ms": ms}
         return {"steps": [*st.get("steps", []), step], "pending": None}
@@ -167,8 +179,9 @@ class NotionAgent:
     def _writer(self, st: AgentState) -> dict[str, Any]:
         steps = st.get("steps", [])
         hits = sorted(self.hits.values(), key=lambda h: h.rerank_score, reverse=True)[:8]
-        writes = [s for s in steps if s["agent"] in ("NotionOps", "Memory")]
-        if not hits and writes:  # pure action request: report what happened
+        writes = [s for s in steps if s["agent"] in ("NotionOps", "ERPOps", "Memory")]
+        if writes and (not hits or any(s["agent"] == "ERPOps" for s in writes)):
+            # action request (ERP lookups before an activity write are just id resolution)
             return {"answer": {"kind": "action", "steps": writes}}
         if not hits:  # planner skipped search: fall back to a direct search
             hits = self.qa.retriever.retrieve(st["question"])

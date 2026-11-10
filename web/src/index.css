@@ -431,3 +431,9 @@ button.mm-tog:hover{background:var(--bg-subtle)}
 .draft .answer>*:last-child::after{content:"";display:inline-block;width:7px;height:14px;margin-left:3px;vertical-align:-2px;background:var(--accent);border-radius:1px;animation:caret 1s steps(2) infinite}
 @keyframes caret{50%{opacity:0}}
 @media (prefers-reduced-motion:reduce){.draft .answer>*:last-child::after{animation:none}}
+
+/* ERP rows in the source panel */
+.erp-rows { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+.erp-rows li { padding: 7px 10px; border-bottom: 1px solid var(--border, #e5e5e5); font-variant-numeric: tabular-nums; }
+.erp-rows li.sub { padding-left: 26px; color: var(--text-muted, #666); }
+.erp-rows li.sum { font-weight: 600; border-bottom: 0; }

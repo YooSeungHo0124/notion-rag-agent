@@ -17,7 +17,9 @@ const cache = new Map<string, PageDoc>();
 
 /** Indexed version first (instant), then the live Notion page replaces it when it arrives. */
 function useDoc(pageId: string | undefined) {
-  pageId = pageId?.startsWith("note:") ? undefined : pageId; // memos are shown from the hit itself
+  // memos and ERP rows are shown from the hit itself; local docs have no live version
+  pageId = /^(note|erp):/.test(pageId ?? "") ? undefined : pageId;
+  const localDoc = pageId?.startsWith("doc:") ?? false;
   const [doc, setDoc] = useState<PageDoc | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [liveLoading, setLiveLoading] = useState(false);
@@ -27,7 +29,19 @@ function useDoc(pageId: string | undefined) {
     setErr(null);
     const hit = cache.get(pageId);
     setDoc(hit ?? null);
-    if (hit?.source === "notion") return;
+    if (hit?.source === "notion" || (hit && localDoc)) return;
+    if (localDoc) {
+      api
+        .page(pageId, false)
+        .then((d) => {
+          cache.set(pageId, d);
+          if (alive) setDoc(d);
+        })
+        .catch((e) => alive && setErr((e as Error).message));
+      return () => {
+        alive = false;
+      };
+    }
     if (!hit)
       api
         .page(pageId, false)
@@ -152,6 +166,9 @@ export default function SourcePanel({
 
   if (!hit) return null;
   const isMemo = hit.page_id.startsWith("note:");
+  const isErp = hit.page_id.startsWith("erp:");
+  const isDoc = hit.page_id.startsWith("doc:");
+  const inline = isMemo || isErp;
   const crumb = [...(hit.path ?? []), ...(hit.heading_path ?? [])];
   return (
     <>
@@ -197,6 +214,22 @@ export default function SourcePanel({
             <Clock3 style={{ width: 13, height: 13 }} />
             {fmtDate(hit.last_edited_time)} 수정 · 이 브라우저에 저장된 내 메모
           </div>
+        ) : isErp ? (
+          <div className="meta">
+            <Clock3 style={{ width: 13, height: 13 }} />
+            {fmtDate(hit.last_edited_time)} ERP에서 조회한 실시간 데이터
+            {hit.page_url && (
+              <a className="btn" href={hit.page_url} target="_blank" rel="noreferrer">
+                <ArrowUpRight />
+                Odoo 열기
+              </a>
+            )}
+          </div>
+        ) : isDoc ? (
+          <div className="meta">
+            <Clock3 style={{ width: 13, height: 13 }} />
+            {fmtDate(hit.last_edited_time)} · 회사 문서 (데모, 로컬 Markdown)
+          </div>
         ) : (
           <div className="meta">
             <Clock3 style={{ width: 13, height: 13 }} />
@@ -230,8 +263,17 @@ export default function SourcePanel({
               {para}
             </p>
           ))}
+        {isErp && (
+          <ul className="erp-rows">
+            {hit.text.split("\n").map((row, i) => (
+              <li key={i} className={row.startsWith("  -") ? "sub" : row.startsWith("합계") ? "sum" : ""}>
+                {row.trim()}
+              </li>
+            ))}
+          </ul>
+        )}
         {err && <div className="err">원문을 불러오지 못했습니다: {err}</div>}
-        {!doc && !err && !isMemo && (
+        {!doc && !err && !inline && (
           <div className="loading">
             <Loader2 className="spin" /> 노션에서 원문을 불러오는 중…
           </div>

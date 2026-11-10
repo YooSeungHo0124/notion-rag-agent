@@ -145,6 +145,24 @@ def sync(
         raise typer.Exit(2)
 
 
+@app.command("index-docs")
+def index_docs_cmd(
+    path: str = typer.Option("", help="Markdown folder (default: settings)"),
+) -> None:
+    """Index local Markdown docs (fictional company docs for the ERP demo)."""
+    from pathlib import Path
+
+    from notion_agent.config import PROJECT_ROOT, get_settings
+    from notion_agent.ingest.local_docs import index_docs
+    from notion_agent.rag.factory import build_sink
+
+    s = get_settings()
+    root = Path(path or s.company_docs_dir)
+    root = root if root.is_absolute() else PROJECT_ROOT / root
+    n = index_docs(root, build_sink(s))
+    console.print(f"indexed {root.name}: {n} chunks")
+
+
 @app.command()
 def serve(
     host: str = typer.Option("127.0.0.1", help="Bind address (keep local: no auth)"),

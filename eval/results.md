@@ -98,3 +98,12 @@ fused = hybrid RRF only, plain = after rerank.
 - abstain_accuracy_unanswerable: 1.00
 - mean_supported_ratio: 0.86
 - mean_latency_s: 7.81
+
+## ERP + 회사 문서 에이전트 평가 (eval/erp_eval.py) · n=14
+
+| 버전 | 답변 정확 | 거절 정확 | 문장 근거율 | 평균 시간 |
+|---|---|---|---|---|
+| erp-v1 | 0.833 | 1.0 | 0.97 | 18.2s |
+| erp-v2 | 0.917 | 1.0 | 0.888 | 19.9s |
+| erp-v3 | 0.917 | 1.0 | 0.872 | 20.4s |
+| erp-v4 | 1.0 | 1.0 | 0.969 | 18.6s |
