@@ -17,6 +17,7 @@ from datetime import datetime
 
 from eval.common import DATASET, EVAL_DIR, RUNS, read_jsonl
 from notion_agent.llm import get_llm
+from notion_agent.observability.tracing import flush, setup_tracing
 from notion_agent.qa.grounded import GroundedQA
 from notion_agent.rag.factory import build_retriever, build_verifier
 
@@ -87,7 +88,29 @@ def eval_retrieval(retriever, rows: list[dict]) -> tuple[dict, list[dict]]:
     return m, per
 
 
-def eval_answers(qa: GroundedQA, rows: list[dict]) -> tuple[dict, list[dict]]:
+class AgentAsQA:
+    """Adapter: run the LangGraph agent and expose its final answer like GroundedQA.answer."""
+
+    def __init__(self, agent) -> None:
+        self.agent = agent
+        self.steps: list[int] = []
+
+    def answer(self, question: str):
+        import uuid
+        from types import SimpleNamespace as NS
+
+        r = self.agent.run(question, uuid.uuid4().hex)
+        self.steps.append(len(r["steps"]))
+        a = r["answer"] or {}
+        if a.get("kind") != "answer":
+            a = {"answerable": False, "sentences": [], "confidence": "none",
+                 "supported_ratio": 0.0, "retrieval_score": 0.0}
+        return NS(answerable=a["answerable"], confidence=a["confidence"],
+                  supported_ratio=a["supported_ratio"], retrieval_score=a["retrieval_score"],
+                  sentences=[NS(text=s["text"]) for s in a["sentences"]])
+
+
+def eval_answers(qa: GroundedQA | AgentAsQA, rows: list[dict]) -> tuple[dict, list[dict]]:
     per = []
     for r in rows:
         t = time.time()
@@ -135,6 +158,8 @@ def eval_answers(qa: GroundedQA, rows: list[dict]) -> tuple[dict, list[dict]]:
         "mean_supported_ratio": sum(p["supported_ratio"] for p in answered) / max(len(answered), 1),
         "mean_latency_s": sum(p["latency_s"] for p in per) / max(len(per), 1),
     }
+    if isinstance(qa, AgentAsQA):
+        m["mean_agent_steps"] = sum(qa.steps) / max(len(qa.steps), 1)
     return m, per
 
 
@@ -142,15 +167,21 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-answers", action="store_true")
     ap.add_argument("--tag", default="run")
+    ap.add_argument("--agent", action="store_true", help="answer via the LangGraph agent")
     args = ap.parse_args()
+    setup_tracing(f"eval-{args.tag}")
 
-    rows = read_jsonl(DATASET)
+    rows = [r for r in read_jsonl(DATASET) if not r.get("exclude")]
     retriever = build_retriever()
     report: dict = {"tag": args.tag, "n": len(rows), "config": retriever.cfg.model_dump()}
     report["retrieval"], ret_per = eval_retrieval(retriever, rows)
     ans_per: list[dict] = []
     if not args.no_answers:
         qa = GroundedQA(retriever, get_llm(), build_verifier())
+        if args.agent:
+            from notion_agent.agent.factory import build_agent
+
+            qa = AgentAsQA(build_agent(qa=qa))
         report["answers"], ans_per = eval_answers(qa, rows)
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -174,6 +205,7 @@ def main() -> None:
     with md.open("a") as f:
         f.write("\n".join(lines) + "\n")
     print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+    flush()
 
 
 if __name__ == "__main__":

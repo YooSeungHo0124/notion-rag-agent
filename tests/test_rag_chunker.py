@@ -3,7 +3,7 @@ from rag_fakes import make_page
 from notion_agent.config import ChunkingConfig
 from notion_agent.rag.chunker import chunk_page
 
-CFG = ChunkingConfig(max_chars=200, overlap_chars=30)
+CFG = ChunkingConfig(max_chars=200, overlap_chars=30, min_chars=0)
 
 
 def _page():
@@ -72,3 +72,21 @@ def test_toggle_heading_label_is_first_line_only():
 
     assert _heading_label("### `Version 2`\nargs.yaml\n```\ntask: detect\n```") == "`Version 2`"
     assert len(_heading_label("## " + "가" * 200)) == 80
+
+
+def test_tiny_sections_merged_with_common_heading_path():
+    cfg = ChunkingConfig(max_chars=300, overlap_chars=0, min_chars=80)
+    p = make_page("p", "T", [("heading_1", "# A", 1), ("paragraph", "short intro", None),
+                             ("heading_2", "## B", 2), ("paragraph", "also short", None)])
+    cs = chunk_page(p, cfg)
+    assert len(cs) == 1
+    assert cs[0].heading_path == ["A"] and "## B" in cs[0].text
+    assert cs[0].block_ids == [f"p-b{i}" for i in range(4)]
+
+
+def test_oversized_code_parts_have_balanced_fences():
+    code = "```python\n" + "\n".join(f"x{i} = {i}" for i in range(80)) + "\n```"
+    cs = chunk_page(make_page("p", "T", [("code", code, None)]), CFG)
+    assert len(cs) > 1
+    assert all(c.text.count("```") % 2 == 0 for c in cs)
+    assert all(c.text.startswith("```python") for c in cs)

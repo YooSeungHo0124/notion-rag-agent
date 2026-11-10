@@ -16,6 +16,8 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
+from notion_agent.observability.tracing import span
+
 
 @dataclass
 class Tool:
@@ -71,6 +73,15 @@ class ToolRegistry:
         return tool.args_model.model_validate(args)
 
     def run(self, name: str, args: dict[str, Any]) -> ToolResult:
+        tool = self.tools.get(name)
+        with span(f"tool:{name}", "TOOL", input=args, tool__name=name,
+                  tool__write=bool(tool and tool.write)) as sp:
+            r = self._run(name, args)
+            sp.set(ok=r.ok, error=r.error)
+            sp.output(r.output if r.ok else r.error)
+            return r
+
+    def _run(self, name: str, args: dict[str, Any]) -> ToolResult:
         t0 = time.time()
         try:
             parsed = self.validate(name, args)

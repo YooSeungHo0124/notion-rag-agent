@@ -9,6 +9,17 @@ app = typer.Typer(no_args_is_help=True, help="Personal Notion RAG agent")
 console = Console()
 
 
+@app.callback()
+def _main() -> None:
+    """Enable Phoenix tracing when NRA_TRACE=1 (see observability.tracing)."""
+    import atexit
+
+    from notion_agent.observability.tracing import flush, setup_tracing
+
+    if setup_tracing():
+        atexit.register(flush)
+
+
 @app.command()
 def llm(prompt: str) -> None:
     """Call the LLM directly, without retrieval (adapter smoke test)."""
