@@ -13,6 +13,8 @@ Flow (docs/08 section 3):
 
 from __future__ import annotations
 
+import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -36,36 +38,122 @@ SYSTEM_PROMPT = """너는 사용자의 개인 노션 기록만을 근거로 답�
 - 기록끼리 내용이 다르면 날짜와 함께 둘 다 언급한다.
 - 질문이 특정 조건(설정값·날짜·대상)을 물으면 그 조건에 해당하는 값을 먼저 정확히 답하고, 다른 조건의 값은 섞지 않는다.
 - 질문이 묻는 항목(수치·원인·방법)을 소스에 있는 범위에서 빠짐없이 답한다. 질문과 무관한 부가 설명은 덧붙이지 않는다.
-- 질문과 같은 언어로 간결하게 답한다. URL은 쓰지 않는다."""
+- 질문과 같은 언어로 간결하게 답한다. URL은 쓰지 않는다.
+
+출력은 blocks 배열이다. 내용에 맞는 형태를 고른다(대부분은 text면 충분하다):
+- text  : 한 문장. text 필드. 문장마다 별도 블록.
+- table : 여러 항목을 같은 기준으로 비교할 때. columns(헤더), rows(문자열 2차원 배열).
+- steps : 순서가 있는 절차. items(단계 문자열 배열).
+- code  : 명령어·코드·설정 파일. lang, code. 소스에 있는 그대로 옮긴다.
+- chart : 소스에 있는 수치 2개 이상을 비교할 때만. chart_kind("bar"), labels, values(숫자), unit.
+          수치는 소스에 적힌 값만 쓴다. 계산·추정한 값 금지.
+모든 블록에 citations를 단다. 표·단계·코드·차트 앞에는 짧은 text 블록으로 무엇인지 설명한다."""
 
 ANSWER_SCHEMA = {
     "type": "object",
     "properties": {
         "answerable": {"type": "boolean"},
-        "sentences": {
+        "blocks": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
-                    "text": {"type": "string"},
+                    "type": {"type": "string", "enum": ["text", "table", "steps", "code", "chart"]},
                     "citations": {"type": "array", "items": {"type": "string"}},
+                    "text": {"type": "string"},
+                    "columns": {"type": "array", "items": {"type": "string"}},
+                    "rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
+                    "items": {"type": "array", "items": {"type": "string"}},
+                    "lang": {"type": "string"},
+                    "code": {"type": "string"},
+                    "chart_kind": {"type": "string", "enum": ["bar"]},
+                    "labels": {"type": "array", "items": {"type": "string"}},
+                    "values": {"type": "array", "items": {"type": "number"}},
+                    "unit": {"type": "string"},
                 },
-                "required": ["text", "citations"],
+                "required": ["type", "citations"],
                 "additionalProperties": False,
             },
         },
     },
-    "required": ["answerable", "sentences"],
+    "required": ["answerable", "blocks"],
     "additionalProperties": False,
 }
 
 
+BLOCK_TYPES = ("text", "table", "steps", "code", "chart")
+
+
 @dataclass
 class Sentence:
+    """One answer block. `text` is its plain-text form (used for verification and eval);
+    `type`/`data` drive the UI component (Generative UI)."""
+
     text: str
     citations: list[int]  # 1-based indexes into Answer.sources
     support: Support
     support_score: float
+    type: str = "text"
+    data: dict = field(default_factory=dict)
+    note: str = ""  # e.g. numbers not found in the cited sources
+
+
+_NUM = re.compile(r"\d+(?:[.,]\d+)?")
+
+
+def _num_key(x: str) -> str:
+    return x.replace(",", "").rstrip("0").rstrip(".") if "." in x else x.replace(",", "")
+
+
+def _num_in(n: str, src: set[str]) -> bool:
+    """Exact match, or `n` is a rounding of a source number (771 ~ 771.8, 1.4 ~ 1.38)."""
+    if n in src:
+        return True
+    try:
+        v = float(n)
+    except ValueError:
+        return False
+    dec = len(n.split(".")[1]) if "." in n else 0
+    tol = 10**-dec + 1e-9  # rounding or truncation to the shown precision
+    for m in src:
+        try:
+            mv = float(m)
+        except ValueError:
+            continue
+        if abs(mv - v) <= tol and (len(m.split(".")[1]) if "." in m else 0) > dec:
+            return True
+    return False
+
+
+def block_payload(b: dict) -> tuple[str, dict] | None:
+    """Validate a raw LLM block -> (plain text, component data); None if unusable."""
+    t = b.get("type", "text")
+    if t == "text":
+        txt = (b.get("text") or "").strip()
+        return (txt, {}) if txt else None
+    if t == "table":
+        cols, rows = b.get("columns") or [], [r for r in b.get("rows") or [] if r]
+        if not cols or not rows:
+            return None
+        rows = [(r + [""] * len(cols))[: len(cols)] for r in rows]
+        txt = "\n".join(" | ".join(r) for r in [cols, *rows])
+        return txt, {"columns": cols, "rows": rows}
+    if t == "steps":
+        items = [i.strip() for i in b.get("items") or [] if i.strip()]
+        return ("\n".join(items), {"items": items}) if items else None
+    if t == "code":
+        code = (b.get("code") or "").rstrip()
+        return (code, {"lang": b.get("lang") or "", "code": code}) if code else None
+    if t == "chart":
+        labels, values = b.get("labels") or [], b.get("values") or []
+        n = min(len(labels), len(values))
+        if n < 2:
+            return None
+        labels, values = labels[:n], values[:n]
+        unit = b.get("unit") or ""
+        txt = ", ".join(f"{lab} {v:g}{unit}" for lab, v in zip(labels, values, strict=True))
+        return txt, {"kind": "bar", "labels": labels, "values": values, "unit": unit}
+    return None
 
 
 @dataclass
@@ -111,13 +199,23 @@ class GroundedQA:
         self.llm = llm
         self.verifier = verifier
 
-    def answer(self, question: str, filters: SearchFilters | None = None) -> Answer:
-        return self.answer_from_hits(question, self.retriever.retrieve(question, filters=filters))
+    def answer(
+        self, question: str, filters: SearchFilters | None = None,
+        on_event: Callable[[str, dict], None] | None = None,
+    ) -> Answer:
+        emit = on_event or (lambda *_: None)
+        emit("retrieving", {})
+        hits = self.retriever.retrieve(question, filters=filters)
+        emit("retrieved", {"n": len(hits), "top": round(hits[0].rerank_score, 3) if hits else 0,
+                           "titles": list(dict.fromkeys(h.page_title for h in hits))[:5]})
+        return self.answer_from_hits(question, hits, on_event=emit)
 
-    def answer_from_hits(self, question: str, hits: list[Hit]) -> Answer:
+    def answer_from_hits(
+        self, question: str, hits: list[Hit], on_event: Callable[[str, dict], None] | None = None
+    ) -> Answer:
         """Grounded answer over already-retrieved hits (used by the agent's writer node)."""
         with span("grounded_answer", "CHAIN", input=question, n_hits=len(hits)) as sp:
-            a = self._answer_from_hits(question, hits)
+            a = self._answer_from_hits(question, hits, on_event or (lambda *_: None))
             sp.output(" ".join(s.text for s in a.sentences) or "(abstain)")
             sp.set(answerable=a.answerable, confidence=a.confidence,
                    supported_ratio=round(a.supported_ratio, 3),
@@ -125,18 +223,22 @@ class GroundedQA:
                    dropped_citations=a.dropped_citations)
             return a
 
-    def _answer_from_hits(self, question: str, hits: list[Hit]) -> Answer:
+    def _answer_from_hits(
+        self, question: str, hits: list[Hit], emit: Callable[[str, dict], None]
+    ) -> Answer:
         top = hits[0].rerank_score if hits else 0.0
         if not hits or not hits[0].answerable:
             return Answer(question=question, answerable=False, retrieval_score=top)
 
+        emit("generating", {})
         prompt = f"<sources>\n{_format_sources(hits)}\n</sources>\n\n질문: {question}"
         resp = self.llm.complete(prompt, system=SYSTEM_PROMPT, json_schema=ANSWER_SCHEMA)
         data = resp.structured or {}
-        if not data.get("answerable") or not data.get("sentences"):
+        raw = data.get("blocks") or data.get("sentences") or []
+        if not data.get("answerable") or not raw:
             return Answer(question, False, retrieval_score=top, latency_ms=resp.latency_ms)
-
-        return self._verify(question, data["sentences"], hits, top, resp.latency_ms)
+        emit("verifying", {"blocks": len(raw)})
+        return self._verify(question, raw, hits, top, resp.latency_ms)
 
     def _verify(
         self, question: str, raw: list[dict], hits: list[Hit], top: float, latency_ms: int
@@ -155,16 +257,55 @@ class GroundedQA:
                 else:
                     dropped += 1
             ids = list(dict.fromkeys(ids))
-            text = item.get("text", "").strip()
-            if not text:
+            parsed = block_payload(item)
+            if parsed is None:
                 continue
+            text, bdata = parsed
+            btype = item.get("type", "text")
             score = 0.0
             if ids:
-                score = max(self.verifier.score(text, [hits[i - 1].text for i in ids]))
+                score = max(self.verifier.score(text[:2000], [hits[i - 1].text for i in ids]))
+            note = ""
+            if btype in ("table", "chart", "code") and ids:
+                # numbers / code must literally come from the cited sources
+                src = " ".join(hits[i - 1].text for i in ids)
+                if btype == "code":
+                    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+                    ok = sum(ln in src for ln in lines) / max(len(lines), 1)
+                    score = max(score, ok) if ok >= 0.8 else min(score, ok)
+                else:
+                    srcnums = {_num_key(n) for n in _NUM.findall(src)}
+                    nums = [_num_key(n) for n in _NUM.findall(text)]
+                    missing = [n for n in nums if not _num_in(n, srcnums)]
+                    if missing:  # model forgot a citation? attach retrieved hits holding them
+                        for j, h in enumerate(hits, 1):
+                            if j in ids:
+                                continue
+                            hn = {_num_key(n) for n in _NUM.findall(h.text)}
+                            if any(_num_in(n, hn) for n in missing):
+                                ids.append(j)
+                                srcnums |= hn
+                        missing = [n for n in nums if not _num_in(n, srcnums)]
+                    if missing:
+                        note = f"출처에 없는 수치: {', '.join(missing[:5])}"
+                        score = min(score, PARTIAL_MIN - 0.01)
+                    elif nums:
+                        score = max(score, SUPPORTED_MIN)
             for i in ids:
                 if i not in cited_order:
                     cited_order.append(i)
-            sentences.append(Sentence(text, ids, _classify(score), score))
+            sentences.append(Sentence(text, ids, _classify(score), score, btype, bdata, note))
+
+        # a short lead-in sentence ("설정은 다음과 같습니다.") right before a table/steps/code/
+        # chart is judged together with that block instead of on its own
+        for prev, nxt in zip(sentences, sentences[1:], strict=False):
+            if (prev.type == "text" and nxt.type != "text" and len(prev.text) <= 60
+                    and prev.support_score < nxt.support_score):
+                prev.support_score, prev.support = nxt.support_score, nxt.support
+                prev.citations = prev.citations or list(nxt.citations)
+                for i in prev.citations:
+                    if i not in cited_order:
+                        cited_order.append(i)
 
         # renumber citations to the order sources first appear in the answer
         remap = {orig: n for n, orig in enumerate(cited_order, 1)}

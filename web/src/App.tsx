@@ -150,7 +150,9 @@ export default function App() {
       return;
     }
     try {
-      const answer = await api.ask(question, pageIds);
+      const answer = await api.askStream(question, pageIds, (stage) =>
+        setMessages((ms) => ms.map((m) => (m.id === id ? { ...m, stage } : m))),
+      );
       setMessages((ms) => ms.map((m) => (m.id === id ? { ...m, answer } : m)));
     } catch (e) {
       setMessages((ms) => ms.map((m) => (m.id === id ? { ...m, error: (e as Error).message } : m)));

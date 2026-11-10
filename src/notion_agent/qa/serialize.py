@@ -34,6 +34,9 @@ def answer_to_json(a: Answer) -> dict[str, Any]:
                 "citations": s.citations,
                 "support": s.support,
                 "support_score": round(s.support_score, 4),
+                "type": s.type,
+                "data": s.data,
+                "note": s.note,
             }
             for s in a.sentences
         ],

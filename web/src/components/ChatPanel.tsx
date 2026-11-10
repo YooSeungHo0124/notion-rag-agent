@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { AgentRun, Answer } from "../types";
+import type { AgentRun, Answer, Stage } from "../types";
 import AnswerView from "./AnswerView";
 
 export interface Message {
@@ -10,6 +10,7 @@ export interface Message {
   answer?: Answer;
   error?: string;
   agentMode?: boolean;
+  stage?: Stage;
   run?: AgentRun;
   actionDone?: boolean;
 }
@@ -21,6 +22,32 @@ interface Props {
   onSave: (m: Message) => void;
   disabledReason: string | null;
   busy: boolean;
+}
+
+const STAGES: [Stage["name"], string][] = [
+  ["retrieving", "노트 검색"],
+  ["generating", "답변 작성"],
+  ["verifying", "근거 검증"],
+];
+
+function StageLine({ m }: { m: Message }) {
+  if (m.agentMode) return <>에이전트가 도구를 고르고 실행하는 중…</>;
+  const cur = m.stage?.name === "retrieved" ? "generating" : (m.stage?.name ?? "retrieving");
+  const idx = STAGES.findIndex(([n]) => n === cur);
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      {STAGES.map(([n, label], i) => (
+        <span
+          key={n}
+          className={i < idx ? "text-emerald-600" : i === idx ? "font-medium text-indigo-600" : "text-stone-400"}
+        >
+          {i < idx ? "✓" : i === idx ? "●" : "○"} {label}
+          {n === "retrieving" && i < idx && m.stage?.n !== undefined && ` (${m.stage.n}개)`}
+          {i < STAGES.length - 1 && <span className="ml-1.5 text-stone-300">→</span>}
+        </span>
+      ))}
+    </span>
+  );
 }
 
 function Elapsed({ since }: { since: number }) {
@@ -154,7 +181,7 @@ export default function ChatPanel({ messages, onAsk, onDecide, onSave, disabledR
               {!m.answer && !m.error && !m.actionDone && m.run?.status !== "awaiting_approval" && (
                 <div className="flex items-center gap-3 text-sm text-stone-500">
                   <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
-                  노트를 찾고 답변을 검증하는 중… <Elapsed since={m.startedAt} />
+                  <StageLine m={m} /> <Elapsed since={m.startedAt} />
                 </div>
               )}
               {m.error && (
