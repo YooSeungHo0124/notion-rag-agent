@@ -40,5 +40,50 @@ def doctor() -> None:
         console.print("torch        : not installed (uv sync --extra rag)")
 
 
+@app.command()
+def sync(
+    full: bool = typer.Option(False, "--full", help="Reprocess every page"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print actions, write nothing"),
+) -> None:
+    """Incrementally sync Notion pages into the index (F1)."""
+    import logging
+
+    from notion_agent.config import get_settings
+    from notion_agent.ingest.notion_reader import NotionReader
+    from notion_agent.ingest.state import SyncState
+    from notion_agent.ingest.sync import PrintSink
+    from notion_agent.ingest.sync import sync as run_sync
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    s = get_settings()
+    try:
+        reader = NotionReader.from_settings(s)
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+    if dry_run:
+        sink = PrintSink(console.print)
+    else:
+        try:
+            from notion_agent.rag.factory import build_sink
+        except ImportError as exc:
+            console.print(f"[red]RAG sink unavailable (F2 not installed?): {exc}[/red]")
+            console.print("Use --dry-run to test ingestion only.")
+            raise typer.Exit(1) from exc
+        sink = build_sink(s)
+
+    state = SyncState(s.state_db)
+    try:
+        report = run_sync(reader, sink, state, full=full, commit=not dry_run)
+    finally:
+        state.close()
+    console.print(report.summary())
+    for err in report.errors:
+        console.print(f"[yellow]  {err}[/yellow]")
+    if report.failed:
+        raise typer.Exit(2)
+
+
 if __name__ == "__main__":
     app()
