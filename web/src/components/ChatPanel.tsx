@@ -33,7 +33,9 @@ const EXAMPLES = ["GPU OOM 어떻게 해결했지?", "지난 회의에서 결정
 export default function ChatPanel({ messages, onAsk, onSave, disabledReason, busy }: Props) {
   const [q, setQ] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
-  useEffect(() => endRef.current?.scrollIntoView({ behavior: "smooth" }), [messages]);
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
   const submit = () => {
     const v = q.trim();
