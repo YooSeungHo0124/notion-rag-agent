@@ -1,4 +1,4 @@
-import type { AgentRun, Answer, PageDoc, Stage, Health, PageSource, SyncStatus } from "./types";
+import type { AgentRun, Answer, AnswerImage, PageDoc, Stage, Health, PageSource, SyncStatus } from "./types";
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, {
@@ -66,6 +66,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ thread_id, approved, args: args ?? null }),
     }),
+  answerImages: (a: Answer) =>
+    req<{ images: AnswerImage[] }>("/api/answer/images", {
+      method: "POST",
+      body: JSON.stringify({
+        sources: a.sources.map((h) => ({ page_id: h.page_id, block_ids: h.block_ids ?? [] })),
+        sentences: a.sentences.map((x) => ({ text: x.text, citations: x.citations, type: x.type })),
+      }),
+    }).then((r) => r.images),
   page: (page_id: string, live: boolean) =>
     req<PageDoc>(`/api/page/${encodeURIComponent(page_id)}?live=${live ? 1 : 0}`),
   sync: () => req<SyncStatus>("/api/sync", { method: "POST", body: "{}" }),

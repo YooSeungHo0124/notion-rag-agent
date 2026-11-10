@@ -125,8 +125,18 @@ export default function App() {
     );
   }, []);
 
+  // images near the cited blocks, judged relevant server-side; never blocks the answer
+  const loadImages = (cid: string, tid: string, a: Answer) => {
+    if (!a.answerable || !a.sources.length) return;
+    api
+      .answerImages(a)
+      .then((images) => images.length && patchTurn(cid, tid, { images }))
+      .catch(() => {});
+  };
+
   const applyRun = (cid: string, tid: string, run: AgentRun, t0: number) => {
     const a = run.answer;
+    if (a && a.kind === "answer") loadImages(cid, tid, a as Answer);
     patchTurn(cid, tid, {
       run,
       answer: a && a.kind === "answer" ? (a as Answer) : undefined,
@@ -166,6 +176,7 @@ export default function App() {
       } else {
         const a = await api.askStream(q, sc?.page_ids ?? [], (stage) => patchTurn(id, turn.id, stage.name === "retrieved" ? { stage, retrieved: stage } : { stage }), ctl.signal);
         patchTurn(id, turn.id, { answer: a, doneMs: Date.now() - t0 });
+        loadImages(id, turn.id, a);
       }
     } catch (e) {
       if ((e as Error).name === "AbortError") patchTurn(id, turn.id, { stopped: true });
@@ -310,6 +321,12 @@ export default function App() {
         return;
       }
       setPanel({ turnId: t.id, idx: n });
+      return;
+    }
+    const fig = el.closest<HTMLElement>("[data-img-src]");
+    if (fig) {
+      const t = turnOf(fig);
+      if (t?.answer) setPanel({ turnId: t.id, idx: Number(fig.dataset.imgSrc) });
       return;
     }
     const cp = el.closest<HTMLElement>("[data-copy]");

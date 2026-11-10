@@ -155,6 +155,7 @@ export interface Turn {
   startedAt: number;
   stage?: Stage;
   retrieved?: Stage;
+  images?: AnswerImage[];
   answer?: Answer;
   run?: AgentRun;
   error?: string;
@@ -168,4 +169,16 @@ export interface Conv {
   updatedAt: number;
   turns: Turn[];
   scope?: { label: string; page_ids: string[] } | null;
+}
+
+export interface AnswerImage {
+  block_id: string;
+  page_id: string;
+  source: number;
+  after_block: number;
+  caption: string;
+  context: string;
+  heading: string;
+  score: number;
+  src: string;
 }
