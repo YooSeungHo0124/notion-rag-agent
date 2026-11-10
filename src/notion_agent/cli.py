@@ -58,6 +58,17 @@ def agent(question: str) -> None:
 
 
 @app.command()
+def mcp() -> None:
+    """Run the read-only `my-memory` MCP server on stdio."""
+    import logging
+
+    logging.basicConfig(level=logging.WARNING)  # stdout is the MCP channel
+    from notion_agent.mcp_server import main
+
+    main()
+
+
+@app.command()
 def doctor() -> None:
     """Check the local environment (LLM CLI, GPU, config)."""
     import shutil
