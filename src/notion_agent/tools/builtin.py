@@ -36,6 +36,10 @@ class AppendArgs(BaseModel):
     text: str = Field(description="추가할 본문(줄바꿈으로 문단 구분)")
 
 
+class RememberArgs(BaseModel):
+    fact: str = Field(description="나에 대한 사실/선호 한 문장")
+
+
 class CreatePageArgs(BaseModel):
     parent_page_id: str
     title: str
@@ -61,6 +65,7 @@ def build_registry(
     notion: Any | None = None,
     *,
     hit_sink: dict[str, Hit] | None = None,
+    profile: Any | None = None,
 ) -> ToolRegistry:
     """`hit_sink` collects every retrieved Hit so the writer can cite them."""
     reg = ToolRegistry()
@@ -119,6 +124,13 @@ def build_registry(
                       PageArgs, get_page))
     reg.register(Tool("get_timeline", "최근 수정된 페이지 목록(날짜순).",
                       TimelineArgs, get_timeline))
+
+    if profile is not None:
+        def remember(a: RememberArgs) -> dict[str, Any]:
+            return {"saved": bool(profile.add(a.fact)), "fact": a.fact}
+
+        reg.register(Tool("remember", "나에 대한 사실·선호를 로컬 장기 메모리에 저장.",
+                          RememberArgs, remember))
 
     if notion is not None:
         def append_to_page(a: AppendArgs) -> dict[str, Any]:
