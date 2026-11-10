@@ -197,6 +197,7 @@ class Answer:
     dropped_citations: int = 0  # citations to ids we never provided
     latency_ms: int = 0
     followups: list[str] = field(default_factory=list)
+    closest: Hit | None = None  # best (weak) hit when abstaining, so the UI can offer it
 
 
 def _format_sources(hits: list[Hit]) -> str:
@@ -258,7 +259,8 @@ class GroundedQA:
     ) -> Answer:
         top = hits[0].rerank_score if hits else 0.0
         if not hits or not hits[0].answerable:
-            return Answer(question=question, answerable=False, retrieval_score=top)
+            return Answer(question=question, answerable=False, retrieval_score=top,
+                          closest=hits[0] if hits else None)
 
         emit("generating", {})
         prompt = f"<sources>\n{_format_sources(hits)}\n</sources>\n\n질문: {question}"
@@ -266,7 +268,8 @@ class GroundedQA:
         data = resp.structured or {}
         raw = data.get("blocks") or data.get("sentences") or []
         if not data.get("answerable") or not raw:
-            return Answer(question, False, retrieval_score=top, latency_ms=resp.latency_ms)
+            return Answer(question, False, retrieval_score=top, latency_ms=resp.latency_ms,
+                          closest=hits[0])
         emit("verifying", {"blocks": len(raw)})
         a = self._verify(question, raw, hits, top, resp.latency_ms)
         a.followups = [f.strip() for f in data.get("followups") or [] if f.strip()][:3]

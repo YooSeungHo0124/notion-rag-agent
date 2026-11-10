@@ -1,9 +1,14 @@
 <!doctype html>
-<html lang="ko">
+<html lang="ko" data-theme="light">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>내 노션 노트북</title>
+    <title>내 노트</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" />
+    <script>
+      try { const t = localStorage.getItem("nra.theme"); if (t) document.documentElement.dataset.theme = t; } catch {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

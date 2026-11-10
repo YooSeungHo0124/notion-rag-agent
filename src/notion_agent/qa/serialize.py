@@ -21,6 +21,7 @@ def hit_to_json(h: Hit) -> dict[str, Any]:
         "tags": h.tags,
         "last_edited_time": h.last_edited_time.isoformat(),
         "rerank_score": round(h.rerank_score, 4),
+        "block_ids": h.block_ids,
     }
 
 
@@ -47,4 +48,5 @@ def answer_to_json(a: Answer) -> dict[str, Any]:
         "dropped_citations": a.dropped_citations,
         "latency_ms": a.latency_ms,
         "followups": a.followups,
+        "closest": hit_to_json(a.closest) if a.closest else None,
     }

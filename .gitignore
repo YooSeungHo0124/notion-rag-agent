@@ -36,3 +36,4 @@ web/dist/
 # eval datasets/answers contain personal note content: never publish
 eval/*.jsonl
 eval/runs/
+web/tsconfig.tsbuildinfo
