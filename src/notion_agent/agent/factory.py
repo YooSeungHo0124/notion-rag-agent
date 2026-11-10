@@ -26,9 +26,12 @@ def build_agent(
         from notion_client import Client
 
         notion = Client(auth=s.notion_token)
+    from notion_agent.memory.profile import ProfileStore
+
+    data = s.state_db.parent
+    data.mkdir(parents=True, exist_ok=True)
+    profile = ProfileStore(data / "profile.sqlite")
     sink: dict = {}
-    reg = build_registry(qa.retriever, notion, hit_sink=sink)
-    db = s.state_db.parent / "agent_checkpoints.sqlite"
-    db.parent.mkdir(parents=True, exist_ok=True)
-    saver = SqliteSaver(sqlite3.connect(db, check_same_thread=False))
-    return NotionAgent(llm, reg, qa, sink, checkpointer=saver)
+    reg = build_registry(qa.retriever, notion, hit_sink=sink, profile=profile)
+    saver = SqliteSaver(sqlite3.connect(data / "agent_checkpoints.sqlite", check_same_thread=False))
+    return NotionAgent(llm, reg, qa, sink, checkpointer=saver, profile=profile)

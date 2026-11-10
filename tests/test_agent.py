@@ -31,6 +31,10 @@ class Q(BaseModel):
     query: str
 
 
+class R(BaseModel):
+    fact: str
+
+
 class W(BaseModel):
     page_id: str
     text: str
@@ -94,3 +98,27 @@ def test_write_runs_after_approval_with_edited_args():
     r = agent.resume("t5", approved=True, args={"page_id": "p1", "text": "edited"})
     assert r["status"] == "done" and written[0].text == "edited"
     assert r["answer"]["kind"] == "action"
+
+
+def test_followup_sees_previous_turn_and_remember_saves_profile(tmp_path):
+    from notion_agent.memory.profile import ProfileStore
+
+    agent, llm, _ = make([("search_notes", '{"query": "OOM"}'), ("final", "{}"),
+                          ("remember", '{"fact": "답변은 짧게 선호"}'), ("final", "{}")])
+    agent.profile = ProfileStore(tmp_path / "p.sqlite")
+    agent.reg.register(Tool("remember", "r", R,
+                            lambda a: {"saved": bool(agent.profile.add(a.fact))}))
+    prompts = []
+    orig = llm.complete
+
+    def spy(prompt, **kw):
+        prompts.append(prompt)
+        return orig(prompt, **kw)
+
+    llm.complete = spy
+    agent.run("GPU OOM 어떻게 해결?", "th")
+    r = agent.run("앞으로 답변은 짧게 해줘, 기억해", "th")
+    assert r["answer"]["kind"] == "action" and r["steps"][0]["agent"] == "Memory"
+    assert "Q: GPU OOM 어떻게 해결?" in prompts[-1]
+    assert [f["fact"] for f in agent.profile.list()] == ["답변은 짧게 선호"]
+    assert "답변은 짧게 선호" in agent.profile.as_prompt()

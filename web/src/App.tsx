@@ -109,6 +109,7 @@ export default function App() {
     }
   };
 
+  const threadId = useRef(uid());
   const busy = messages.some((m) => !m.answer && !m.error && m.run?.status !== "awaiting_approval");
 
   const applyRun = (id: string, run: AgentRun) =>
@@ -142,7 +143,7 @@ export default function App() {
     setDrawer("none");
     if (agentMode) {
       try {
-        applyRun(id, await api.agent(question));
+        applyRun(id, await api.agent(question, threadId.current));
       } catch (e) {
         setMessages((ms) => ms.map((m) => (m.id === id ? { ...m, error: (e as Error).message } : m)));
       }
