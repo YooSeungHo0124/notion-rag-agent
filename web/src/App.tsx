@@ -4,7 +4,7 @@ import ChatPanel, { type Message } from "./components/ChatPanel";
 import { answerPlainText } from "./components/AnswerView";
 import SourcesPanel from "./components/SourcesPanel";
 import StudioPanel from "./components/StudioPanel";
-import type { Health, PageSource, SavedNote, SyncStatus } from "./types";
+import type { AgentRun, Answer, Health, PageSource, SavedNote, SyncStatus } from "./types";
 import { loadJSON, saveJSON, uid } from "./util";
 
 const K_EXCLUDED = "nra.excludedSources";
@@ -109,15 +109,45 @@ export default function App() {
     }
   };
 
-  const busy = messages.some((m) => !m.answer && !m.error);
+  const busy = messages.some((m) => !m.answer && !m.error && m.run?.status !== "awaiting_approval");
+
+  const applyRun = (id: string, run: AgentRun) =>
+    setMessages((ms) =>
+      ms.map((m) => {
+        if (m.id !== id) return m;
+        const a = run.answer;
+        const answer = a && a.kind === "answer" ? (a as Answer) : undefined;
+        const done = run.status === "done";
+        return { ...m, run, answer, actionDone: done && (!a || a.kind === "action") };
+      }),
+    );
+
+  const onDecide = async (id: string, approved: boolean) => {
+    const m = messages.find((x) => x.id === id);
+    if (!m?.run) return;
+    setMessages((ms) => ms.map((x) => (x.id === id ? { ...x, run: { ...m.run!, status: "done", approval: null } } : x)));
+    try {
+      applyRun(id, await api.resume(m.run.thread_id, approved));
+    } catch (e) {
+      setMessages((ms) => ms.map((x) => (x.id === id ? { ...x, error: (e as Error).message } : x)));
+    }
+  };
   const allSelected = selected.size === sources.length;
 
-  const onAsk = async (question: string) => {
+  const onAsk = async (question: string, agentMode = false) => {
     const id = uid();
     const pageIds = allSelected ? [] : [...selected];
     const scope = allSelected ? "전체 노션" : `선택한 ${selected.size}개 페이지`;
-    setMessages((ms) => [...ms, { id, question, scope, startedAt: Date.now() }]);
+    setMessages((ms) => [...ms, { id, question, scope: agentMode ? "에이전트 · 전체 노션" : scope, startedAt: Date.now(), agentMode }]);
     setDrawer("none");
+    if (agentMode) {
+      try {
+        applyRun(id, await api.agent(question));
+      } catch (e) {
+        setMessages((ms) => ms.map((m) => (m.id === id ? { ...m, error: (e as Error).message } : m)));
+      }
+      return;
+    }
     try {
       const answer = await api.ask(question, pageIds);
       setMessages((ms) => ms.map((m) => (m.id === id ? { ...m, answer } : m)));
@@ -191,7 +221,7 @@ export default function App() {
       <main className="relative flex min-h-0 flex-1 gap-3 px-3 pb-3">
         <aside className="panel hidden w-72 shrink-0 overflow-hidden lg:block">{sourcesPanel}</aside>
         <section className="panel min-w-0 flex-1 overflow-hidden">
-          <ChatPanel messages={messages} onAsk={onAsk} onSave={onSave} disabledReason={disabledReason} busy={busy} />
+          <ChatPanel messages={messages} onAsk={onAsk} onDecide={onDecide} onSave={onSave} disabledReason={disabledReason} busy={busy} />
         </section>
         <aside className="panel hidden w-80 shrink-0 overflow-hidden xl:block">{studioPanel}</aside>
 

@@ -50,3 +50,24 @@ def render_answer(console: Console, a: Answer) -> None:
         )
     note = "신뢰도는 '내 노트에 근거하는가'를 뜻하며 사실 여부를 보장하지 않습니다."
     console.print(f"[dim]{note}[/dim]")
+
+
+def render_answer_json(console: Console, a: dict | None) -> None:
+    """Plain rendering of the agent's serialised answer (dict from answer_to_json)."""
+    if not a:
+        console.print("(no answer)")
+        return
+    if a.get("kind") == "action":
+        for s in a["steps"]:
+            console.print(f"{s['tool']}: {'완료' if s['ok'] else '실패/거부'} → {s['observation']}",
+                          markup=False)
+        return
+    if not a.get("answerable"):
+        console.print("기록에서 근거를 찾지 못했습니다.")
+        return
+    for s in a["sentences"]:
+        cites = "".join(f"[{n}]" for n in s["citations"])
+        console.print(f"{s['text']} {cites} ({s['support']})", markup=False)
+    for i, h in enumerate(a["sources"], 1):
+        console.print(f"  [{i}] {h['title']} {h['cite_url']}", markup=False)
+    console.print(f"신뢰도: {a['confidence']}", markup=False)

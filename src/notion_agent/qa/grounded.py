@@ -109,7 +109,10 @@ class GroundedQA:
         self.verifier = verifier
 
     def answer(self, question: str, filters: SearchFilters | None = None) -> Answer:
-        hits = self.retriever.retrieve(question, filters=filters)
+        return self.answer_from_hits(question, self.retriever.retrieve(question, filters=filters))
+
+    def answer_from_hits(self, question: str, hits: list[Hit]) -> Answer:
+        """Grounded answer over already-retrieved hits (used by the agent's writer node)."""
         top = hits[0].rerank_score if hits else 0.0
         if not hits or not hits[0].answerable:
             return Answer(question=question, answerable=False, retrieval_score=top)

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { Answer } from "../types";
+import type { AgentRun, Answer } from "../types";
 import AnswerView from "./AnswerView";
 
 export interface Message {
@@ -9,11 +9,15 @@ export interface Message {
   startedAt: number;
   answer?: Answer;
   error?: string;
+  agentMode?: boolean;
+  run?: AgentRun;
+  actionDone?: boolean;
 }
 
 interface Props {
   messages: Message[];
-  onAsk: (q: string) => void;
+  onAsk: (q: string, agentMode: boolean) => void;
+  onDecide: (id: string, approved: boolean) => void;
   onSave: (m: Message) => void;
   disabledReason: string | null;
   busy: boolean;
@@ -30,8 +34,67 @@ function Elapsed({ since }: { since: number }) {
 
 const EXAMPLES = ["GPU OOM 어떻게 해결했지?", "지난 회의에서 결정한 것 정리해줘", "최근에 읽은 책 목록"];
 
-export default function ChatPanel({ messages, onAsk, onSave, disabledReason, busy }: Props) {
+const TOOL_LABEL: Record<string, string> = {
+  search_notes: "노트 검색",
+  get_page: "페이지 읽기",
+  get_timeline: "최근 수정 목록",
+  append_to_page: "페이지에 추가",
+  create_page: "새 페이지 생성",
+};
+
+function short(v: unknown): string {
+  const s = typeof v === "string" ? v : JSON.stringify(v);
+  return s.length > 120 ? s.slice(0, 120) + "…" : s;
+}
+
+function Steps({ run }: { run: AgentRun }) {
+  if (!run.steps.length) return null;
+  return (
+    <details className="rounded-xl border border-stone-200 bg-stone-50 p-3 text-xs dark:border-stone-700 dark:bg-stone-900">
+      <summary className="cursor-pointer text-stone-500">
+        에이전트 실행 과정 {run.steps.length}단계
+        {run.done_reason === "step_limit" ? " (단계 한도 도달)" : ""} · {(run.total_ms / 1000).toFixed(1)}초
+      </summary>
+      <ol className="mt-2 space-y-1.5">
+        {run.steps.map((s, i) => (
+          <li key={i} className="font-mono">
+            <span className={s.ok ? "text-emerald-600" : "text-rose-600"}>{s.ok ? "✓" : "✗"}</span>{" "}
+            <span className="text-stone-400">{s.agent}</span> {TOOL_LABEL[s.tool] ?? s.tool}{" "}
+            <span className="text-stone-500">{short(s.args)}</span>
+            {!s.ok && <div className="ml-4 text-rose-600">{short(s.observation)}</div>}
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
+function Approval({ run, onDecide }: { run: AgentRun; onDecide: (ok: boolean) => void }) {
+  const ap = run.approval!;
+  return (
+    <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-800 dark:bg-amber-950/40">
+      <p className="font-medium text-amber-900 dark:text-amber-200">
+        노션에 쓰기 전에 승인이 필요합니다: {TOOL_LABEL[ap.tool] ?? ap.tool}
+      </p>
+      {ap.thought && <p className="mt-1 text-xs text-amber-800/80 dark:text-amber-300/80">{ap.thought}</p>}
+      <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-white p-2 text-xs dark:bg-stone-900">
+        {JSON.stringify(ap.args, null, 2)}
+      </pre>
+      <div className="mt-3 flex gap-2">
+        <button onClick={() => onDecide(true)} className="rounded-lg bg-amber-600 px-3 py-1.5 text-white hover:bg-amber-700">
+          승인하고 실행
+        </button>
+        <button onClick={() => onDecide(false)} className="rounded-lg border border-stone-300 px-3 py-1.5 hover:bg-stone-100 dark:border-stone-600 dark:hover:bg-stone-800">
+          거부
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export default function ChatPanel({ messages, onAsk, onDecide, onSave, disabledReason, busy }: Props) {
   const [q, setQ] = useState("");
+  const [agentMode, setAgentMode] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -40,7 +103,7 @@ export default function ChatPanel({ messages, onAsk, onSave, disabledReason, bus
   const submit = () => {
     const v = q.trim();
     if (!v || busy || disabledReason) return;
-    onAsk(v);
+    onAsk(v, agentMode);
     setQ("");
   };
 
@@ -75,7 +138,20 @@ export default function ChatPanel({ messages, onAsk, onSave, disabledReason, bus
                 </div>
               </div>
               <div className="text-[11px] text-stone-400">범위: {m.scope}</div>
-              {!m.answer && !m.error && (
+              {m.run && <Steps run={m.run} />}
+              {m.run?.status === "awaiting_approval" && (
+                <Approval run={m.run} onDecide={(ok) => onDecide(m.id, ok)} />
+              )}
+              {m.actionDone && m.run?.answer?.kind === "action" && (
+                <div className="rounded-xl border border-stone-200 p-3 text-sm dark:border-stone-700">
+                  {m.run.answer.steps.map((s, i) => (
+                    <div key={i}>
+                      {TOOL_LABEL[s.tool] ?? s.tool}: {s.ok ? "완료" : "실행 안 함"} — {short(s.observation)}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {!m.answer && !m.error && !m.actionDone && m.run?.status !== "awaiting_approval" && (
                 <div className="flex items-center gap-3 text-sm text-stone-500">
                   <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
                   노트를 찾고 답변을 검증하는 중… <Elapsed since={m.startedAt} />
@@ -106,6 +182,10 @@ export default function ChatPanel({ messages, onAsk, onSave, disabledReason, bus
       </div>
 
       <div className="border-t border-stone-200 p-3 sm:p-4 dark:border-stone-800">
+        <label className="mx-auto mb-2 flex max-w-3xl items-center gap-2 text-xs text-stone-500">
+          <input type="checkbox" checked={agentMode} onChange={(e) => setAgentMode(e.target.checked)} />
+          에이전트 모드 (여러 번 검색·페이지 읽기, 노션 기록 요청 시 승인 후 실행)
+        </label>
         <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-2xl border border-stone-200 bg-stone-50 p-2 focus-within:border-indigo-400 dark:border-stone-700 dark:bg-stone-800">
           <textarea
             rows={1}

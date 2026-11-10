@@ -1,4 +1,4 @@
-import type { Answer, Health, PageSource, SyncStatus } from "./types";
+import type { AgentRun, Answer, Health, PageSource, SyncStatus } from "./types";
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, {
@@ -26,6 +26,13 @@ export const api = {
     ),
   ask: (question: string, page_ids: string[]) =>
     req<Answer>("/api/ask", { method: "POST", body: JSON.stringify({ question, page_ids }) }),
+  agent: (question: string, thread_id?: string) =>
+    req<AgentRun>("/api/agent", { method: "POST", body: JSON.stringify({ question, thread_id }) }),
+  resume: (thread_id: string, approved: boolean) =>
+    req<AgentRun>("/api/agent/resume", {
+      method: "POST",
+      body: JSON.stringify({ thread_id, approved }),
+    }),
   sync: () => req<SyncStatus>("/api/sync", { method: "POST", body: "{}" }),
   syncStatus: () => req<SyncStatus>("/api/sync/status"),
 };
