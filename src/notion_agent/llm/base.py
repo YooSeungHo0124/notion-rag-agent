@@ -9,6 +9,7 @@ schema-validated JSON, and our own executor runs tools (see notion_agent.tools).
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -36,3 +37,15 @@ class LLMClient(ABC):
         json_schema: dict[str, Any] | None = None,
     ) -> LLMResponse:
         """Single-turn completion. With `json_schema`, `structured` holds the parsed object."""
+
+    def complete_stream(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        json_schema: dict[str, Any] | None = None,
+        on_partial: Callable[[str], None] | None = None,
+    ) -> LLMResponse:
+        """Like `complete`, calling `on_partial(accumulated_json_text)` as output streams.
+        Providers without streaming just return the final response."""
+        return self.complete(prompt, system=system, json_schema=json_schema)

@@ -36,7 +36,8 @@ export interface Sentence {
 }
 
 export interface Stage {
-  name: "retrieving" | "retrieved" | "generating" | "verifying" | "collecting" | "collected";
+  name: "retrieving" | "retrieved" | "generating" | "verifying" | "collecting" | "collected" | "draft";
+  blocks_draft?: { type: BlockType; text: string; data: Sentence["data"] }[];
   n?: number;
   chunks?: number;
   pages_used?: number;
@@ -162,6 +163,7 @@ export interface Turn {
   stage?: Stage;
   retrieved?: Stage;
   images?: AnswerImage[];
+  draft?: Sentence[];
   answer?: Answer;
   run?: AgentRun;
   error?: string;
