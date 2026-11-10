@@ -11,9 +11,16 @@ NOW = datetime(2026, 11, 1, tzinfo=UTC)
 
 def hit(i: int, text: str, score: float = 0.9, answerable: bool = True) -> Hit:
     return Hit(
-        chunk_id=f"c{i}", page_id=f"p{i}", page_title=f"page{i}", page_url=f"https://n/{i}",
-        block_ids=[f"b{i}"], text=text, last_edited_time=NOW,
-        fusion_score=0.1, rerank_score=score, answerable=answerable,
+        chunk_id=f"c{i}",
+        page_id=f"p{i}",
+        page_title=f"page{i}",
+        page_url=f"https://n/{i}",
+        block_ids=[f"b{i}"],
+        text=text,
+        last_edited_time=NOW,
+        fusion_score=0.1,
+        rerank_score=score,
+        answerable=answerable,
     )
 
 
@@ -51,13 +58,15 @@ def test_abstains_without_calling_llm_when_retrieval_weak():
 
 def test_invalid_citations_dropped_and_sources_renumbered():
     hits = [hit(1, "batch size reduced to 8"), hit(2, "used gradient checkpointing")]
-    llm = StubLLM({
-        "answerable": True,
-        "sentences": [
-            {"text": "used gradient checkpointing", "citations": ["S2", "S9"]},
-            {"text": "batch size reduced to 8", "citations": ["[S1]"]},
-        ],
-    })
+    llm = StubLLM(
+        {
+            "answerable": True,
+            "sentences": [
+                {"text": "used gradient checkpointing", "citations": ["S2", "S9"]},
+                {"text": "batch size reduced to 8", "citations": ["[S1]"]},
+            ],
+        }
+    )
     a = GroundedQA(StubRetriever(hits), llm, OverlapVerifier()).answer("q")
     assert a.dropped_citations == 1
     assert [s.citations for s in a.sentences] == [[1], [2]]
@@ -68,46 +77,79 @@ def test_invalid_citations_dropped_and_sources_renumbered():
 
 def test_unsupported_sentence_lowers_confidence():
     hits = [hit(1, "batch size reduced to 8")]
-    llm = StubLLM({
-        "answerable": True,
-        "sentences": [
-            {"text": "batch size reduced to 8", "citations": ["S1"]},
-            {"text": "the moon is made of cheese", "citations": ["S1"]},
-            {"text": "no citation here", "citations": []},
-        ],
-    })
+    llm = StubLLM(
+        {
+            "answerable": True,
+            "sentences": [
+                {"text": "batch size reduced to 8", "citations": ["S1"]},
+                {"text": "the moon is made of cheese", "citations": ["S1"]},
+                {"text": "no citation here", "citations": []},
+            ],
+        }
+    )
     a = GroundedQA(StubRetriever(hits), llm, OverlapVerifier()).answer("q")
     assert [s.support for s in a.sentences] == ["supported", "unsupported", "unsupported"]
     assert a.confidence == "low"
 
 
 def test_properties_to_text_skips_title_and_empty():
-    page = {"properties": {
-        "이름": {"type": "title", "title": [{"plain_text": "T"}]},
-        "상태": {"type": "status", "status": {"name": "진행 중"}},
-        "메모": {"type": "rich_text", "rich_text": [{"plain_text": "OOM 해결"}]},
-        "빈칸": {"type": "rich_text", "rich_text": []},
-        "완료": {"type": "checkbox", "checkbox": True},
-        "기간": {"type": "date", "date": {"start": "2026-09-01", "end": "2026-09-03"}},
-    }}
+    page = {
+        "properties": {
+            "이름": {"type": "title", "title": [{"plain_text": "T"}]},
+            "상태": {"type": "status", "status": {"name": "진행 중"}},
+            "메모": {"type": "rich_text", "rich_text": [{"plain_text": "OOM 해결"}]},
+            "빈칸": {"type": "rich_text", "rich_text": []},
+            "완료": {"type": "checkbox", "checkbox": True},
+            "기간": {"type": "date", "date": {"start": "2026-09-01", "end": "2026-09-03"}},
+        }
+    }
     assert properties_to_text(page).splitlines() == [
-        "상태: 진행 중", "메모: OOM 해결", "완료: 예", "기간: 2026-09-01 ~ 2026-09-03",
+        "상태: 진행 중",
+        "메모: OOM 해결",
+        "완료: 예",
+        "기간: 2026-09-01 ~ 2026-09-03",
     ]
 
 
 def test_blocks_table_chart_code_verified_against_sources():
-    hits = [hit(1, "batch 4 gives 1.8 fps and batch 8 gives 3.2 fps"),
-            hit(2, "docker build -t app .\ndocker run app")]
-    llm = StubLLM({"answerable": True, "blocks": [
-        {"type": "text", "text": "batch 4 gives 1.8 fps", "citations": ["S1"]},
-        {"type": "table", "columns": ["batch", "fps"], "rows": [["4", "1.8"], ["8", "3.2"]],
-         "citations": ["S1"]},
-        {"type": "chart", "chart_kind": "bar", "labels": ["4", "8"], "values": [1.8, 9.9],
-         "unit": "fps", "citations": ["S1"]},
-        {"type": "code", "lang": "bash", "code": "docker build -t app .\ndocker run app",
-         "citations": ["S2"]},
-        {"type": "table", "columns": [], "rows": [], "citations": ["S1"]},  # unusable -> dropped
-    ]})
+    hits = [
+        hit(1, "batch 4 gives 1.8 fps and batch 8 gives 3.2 fps"),
+        hit(2, "docker build -t app .\ndocker run app"),
+    ]
+    llm = StubLLM(
+        {
+            "answerable": True,
+            "blocks": [
+                {"type": "text", "text": "batch 4 gives 1.8 fps", "citations": ["S1"]},
+                {
+                    "type": "table",
+                    "columns": ["batch", "fps"],
+                    "rows": [["4", "1.8"], ["8", "3.2"]],
+                    "citations": ["S1"],
+                },
+                {
+                    "type": "chart",
+                    "chart_kind": "bar",
+                    "labels": ["4", "8"],
+                    "values": [1.8, 9.9],
+                    "unit": "fps",
+                    "citations": ["S1"],
+                },
+                {
+                    "type": "code",
+                    "lang": "bash",
+                    "code": "docker build -t app .\ndocker run app",
+                    "citations": ["S2"],
+                },
+                {
+                    "type": "table",
+                    "columns": [],
+                    "rows": [],
+                    "citations": ["S1"],
+                },  # unusable -> dropped
+            ],
+        }
+    )
     a = GroundedQA(StubRetriever(hits), llm, OverlapVerifier()).answer("fps?")
     types = [s.type for s in a.sentences]
     assert types == ["text", "table", "chart", "code"]
@@ -119,8 +161,12 @@ def test_blocks_table_chart_code_verified_against_sources():
 
 def test_progress_events_emitted_in_order():
     events = []
-    llm = StubLLM({"answerable": True, "blocks": [
-        {"type": "text", "text": "batch size reduced to 8", "citations": ["S1"]}]})
+    llm = StubLLM(
+        {
+            "answerable": True,
+            "blocks": [{"type": "text", "text": "batch size reduced to 8", "citations": ["S1"]}],
+        }
+    )
     qa = GroundedQA(StubRetriever([hit(1, "batch size reduced to 8")]), llm, OverlapVerifier())
     qa.answer("q", on_event=lambda e, d: events.append(e))
     assert events == ["retrieving", "retrieved", "generating", "verifying"]
@@ -128,11 +174,20 @@ def test_progress_events_emitted_in_order():
 
 def test_missing_citation_for_table_numbers_is_attached_and_leadin_inherits():
     hits = [hit(1, "batch 4 gives 1.8 fps"), hit(2, "batch 8 gives 3.2 fps")]
-    llm = StubLLM({"answerable": True, "blocks": [
-        {"type": "text", "text": "비교는 다음과 같습니다.", "citations": []},
-        {"type": "table", "columns": ["batch", "fps"], "rows": [["4", "1.8"], ["8", "3.2"]],
-         "citations": ["S1"]},
-    ]})
+    llm = StubLLM(
+        {
+            "answerable": True,
+            "blocks": [
+                {"type": "text", "text": "비교는 다음과 같습니다.", "citations": []},
+                {
+                    "type": "table",
+                    "columns": ["batch", "fps"],
+                    "rows": [["4", "1.8"], ["8", "3.2"]],
+                    "citations": ["S1"],
+                },
+            ],
+        }
+    )
     a = GroundedQA(StubRetriever(hits), llm, OverlapVerifier()).answer("fps?")
     lead, table = a.sentences
     assert table.support == "supported" and sorted(table.citations) == [1, 2]
@@ -149,16 +204,33 @@ def test_rounded_numbers_accepted_but_invented_rejected():
 
 def test_summary_heading_callout_flow_and_followups():
     hits = [hit(1, "camera stream goes to decoder then yolo then event server")]
-    llm = StubLLM({"answerable": True, "followups": ["a?", "b?", "c?", "d?"], "blocks": [
-        {"type": "summary", "text": "camera stream goes to decoder then yolo",
-         "citations": ["S1"]},
-        {"type": "heading", "text": "구조", "citations": []},
-        {"type": "flow", "nodes": ["camera", "decoder", "yolo", "event server"],
-         "node_notes": ["stream"], "citations": ["S1"]},
-        {"type": "callout", "level": "bogus", "text": "event server then yolo",
-         "citations": ["S1"]},
-        {"type": "flow", "nodes": ["only one"], "citations": ["S1"]},  # unusable -> dropped
-    ]})
+    llm = StubLLM(
+        {
+            "answerable": True,
+            "followups": ["a?", "b?", "c?", "d?"],
+            "blocks": [
+                {
+                    "type": "summary",
+                    "text": "camera stream goes to decoder then yolo",
+                    "citations": ["S1"],
+                },
+                {"type": "heading", "text": "구조", "citations": []},
+                {
+                    "type": "flow",
+                    "nodes": ["camera", "decoder", "yolo", "event server"],
+                    "node_notes": ["stream"],
+                    "citations": ["S1"],
+                },
+                {
+                    "type": "callout",
+                    "level": "bogus",
+                    "text": "event server then yolo",
+                    "citations": ["S1"],
+                },
+                {"type": "flow", "nodes": ["only one"], "citations": ["S1"]},  # unusable -> dropped
+            ],
+        }
+    )
     a = GroundedQA(StubRetriever(hits), llm, OverlapVerifier()).answer("pipeline?")
     assert [s.type for s in a.sentences] == ["summary", "heading", "flow", "callout"]
     head, flow, call = a.sentences[1], a.sentences[2], a.sentences[3]
@@ -168,5 +240,60 @@ def test_summary_heading_callout_flow_and_followups():
     assert call.data["level"] == "note"
     assert a.followups == ["a?", "b?", "c?"]
     # heading is structure, not a claim: excluded from the supported ratio
-    assert a.supported_ratio == sum(s.support == "supported" for s in a.sentences if
-                                    s.type != "heading") / 3
+    assert (
+        a.supported_ratio
+        == sum(s.support == "supported" for s in a.sentences if s.type != "heading") / 3
+    )
+
+
+def test_complete_blocks_tolerates_partial_json():
+    from notion_agent.qa.grounded import complete_blocks
+
+    full = (
+        '{"answerable":true,"blocks":[{"type":"summary","text":"a } \\" [x]","citations":["S1"]},'
+    )
+    assert complete_blocks(full) == [{"type": "summary", "text": 'a } " [x]', "citations": ["S1"]}]
+    assert complete_blocks(full + '{"type":"text","te') == complete_blocks(full)
+    assert complete_blocks('{"answerable":tr') == []
+    two = full + '{"type":"steps","items":["x"],"citations":[]}],"followups":[]}'
+    assert [b["type"] for b in complete_blocks(two)] == ["summary", "steps"]
+
+
+def test_streaming_emits_unverified_drafts_before_answer():
+    import json as _json
+
+    from notion_agent.llm.base import LLMClient, LLMResponse
+    from notion_agent.qa.grounded import GroundedQA
+
+    final = {
+        "answerable": True,
+        "followups": [],
+        "blocks": [
+            {"type": "summary", "text": "kubectl rollout restart", "citations": ["S1"]},
+            {"type": "steps", "items": ["kubectl rollout restart"], "citations": ["S1"]},
+        ],
+    }
+
+    class StreamLLM(LLMClient):
+        def complete(self, prompt, *, system=None, json_schema=None):
+            return LLMResponse("", structured=final)
+
+        def complete_stream(self, prompt, *, system=None, json_schema=None, on_partial=None):
+            text = _json.dumps(final)
+            for i in range(1, len(text) + 1, 7):
+                on_partial and on_partial(text[:i])
+            on_partial and on_partial(text)
+            return LLMResponse("", structured=final)
+
+    h = hit(1, "kubectl rollout restart deployment")
+    qa = GroundedQA(StubRetriever([h]), StreamLLM(), OverlapVerifier())
+    events = []
+    a = qa.answer_from_hits("restart?", [h], on_event=lambda e, d: events.append((e, d)))
+    drafts = [b for e, d in events if e == "draft" for b in d["blocks"]]
+    assert [d["type"] for d in drafts] == ["summary", "steps"]
+    assert drafts[1]["data"]["items"] == ["kubectl rollout restart"]
+    names = [e for e, _ in events]
+    assert names.index("draft") < names.index("verifying")
+    assert a.answerable and len(a.sentences) == 2
+    # no on_event -> no streaming call path needed
+    assert qa.answer_from_hits("restart?", [h]).answerable

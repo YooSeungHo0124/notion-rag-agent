@@ -13,6 +13,8 @@ Flow (docs/08 section 3):
 
 from __future__ import annotations
 
+import contextlib
+import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -185,6 +187,53 @@ def block_payload(b: dict) -> tuple[str, dict] | None:
     return None
 
 
+def complete_blocks(buf: str) -> list[dict]:
+    """Fully streamed objects of the `"blocks": [...]` array in partial JSON (tolerant)."""
+    k = buf.find('"blocks"')
+    if k < 0:
+        return []
+    i = buf.find("[", k)
+    if i < 0:
+        return []
+    out: list[dict] = []
+    depth, start, in_str, esc = 0, -1, False, False
+    for j in range(i + 1, len(buf)):
+        ch = buf[j]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            if depth == 0:
+                start = j
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start >= 0:
+                with contextlib.suppress(json.JSONDecodeError):
+                    out.append(json.loads(buf[start : j + 1]))
+                start = -1
+        elif ch == "]" and depth == 0:
+            break
+    return out
+
+
+def draft_payload(item: dict) -> dict | None:
+    """Unverified preview of a streamed block for the UI (no citations: numbering is only
+    final after verification)."""
+    parsed = block_payload(item)
+    if parsed is None:
+        return None
+    text, data = parsed
+    return {"type": item.get("type", "text"), "text": text, "data": data}
+
+
 @dataclass
 class Answer:
     question: str
@@ -266,7 +315,8 @@ class GroundedQA:
     ) -> Answer:
         """Grounded answer over already-retrieved hits (used by the agent's writer node)."""
         with span("grounded_answer", "CHAIN", input=question, n_hits=len(hits)) as sp:
-            a = self._answer_from_hits(question, hits, on_event or (lambda *_: None))
+            a = self._answer_from_hits(question, hits, on_event or (lambda *_: None),
+                                       stream=on_event is not None)
             sp.output(" ".join(s.text for s in a.sentences) or "(abstain)")
             sp.set(answerable=a.answerable, confidence=a.confidence,
                    supported_ratio=round(a.supported_ratio, 3),
@@ -275,7 +325,8 @@ class GroundedQA:
             return a
 
     def _answer_from_hits(
-        self, question: str, hits: list[Hit], emit: Callable[[str, dict], None]
+        self, question: str, hits: list[Hit], emit: Callable[[str, dict], None],
+        stream: bool = False,
     ) -> Answer:
         top = hits[0].rerank_score if hits else 0.0
         if not hits or not hits[0].answerable:
@@ -284,7 +335,18 @@ class GroundedQA:
 
         emit("generating", {})
         prompt = f"<sources>\n{_format_sources(hits)}\n</sources>\n\n질문: {question}"
-        resp = self.llm.complete(prompt, system=SYSTEM_PROMPT, json_schema=ANSWER_SCHEMA)
+        sent = [0]
+
+        def on_partial(buf: str) -> None:
+            blocks = complete_blocks(buf)
+            if len(blocks) > sent[0]:
+                new = [d for d in map(draft_payload, blocks[sent[0]:]) if d]
+                sent[0] = len(blocks)
+                if new:
+                    emit("draft", {"blocks": new})
+
+        resp = self.llm.complete_stream(prompt, system=SYSTEM_PROMPT, json_schema=ANSWER_SCHEMA,
+                                        on_partial=on_partial if stream else None)
         data = resp.structured or {}
         raw = data.get("blocks") or data.get("sentences") or []
         if not data.get("answerable") or not raw:

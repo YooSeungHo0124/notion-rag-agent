@@ -1,6 +1,20 @@
 import {
-  Check, ChevronDown, ChevronRight, CircleStop, CheckCircle2, CornerDownRight, Copy, FileText,
-  Info, Maximize2, PanelRightOpen, RotateCcw, ShieldCheck, Star, XCircle, ArrowUpRight,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  CircleStop,
+  CheckCircle2,
+  CornerDownRight,
+  Copy,
+  FileText,
+  Info,
+  Maximize2,
+  PanelRightOpen,
+  RotateCcw,
+  ShieldCheck,
+  Star,
+  XCircle,
+  ArrowUpRight,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { AgentRun, Answer, Turn } from "../types";
@@ -23,7 +37,11 @@ export interface TurnActions {
   copy: (a: Answer) => void;
   toggleSave: (t: Turn) => void;
   isSaved: (t: Turn) => boolean;
-  decide: (turnId: string, approved: boolean, args?: Record<string, unknown>) => void;
+  decide: (
+    turnId: string,
+    approved: boolean,
+    args?: Record<string, unknown>,
+  ) => void;
   retry: (t: Turn) => void;
   openNotion: (url: string, title: string) => void;
 }
@@ -45,7 +63,9 @@ function Progress({ t }: { t: Turn }) {
   const titles = t.retrieved?.titles ?? [];
   const row = (i: number, run: ReactLabel, done: ReactLabel) => (
     <div className={`step ${i < cur ? "done" : i === cur ? "run" : ""}`}>
-      <span className="ic">{i < cur ? <Check /> : <span className="ring" />}</span>
+      <span className="ic">
+        {i < cur ? <Check /> : <span className="ring" />}
+      </span>
       {i < cur ? done : run}
     </div>
   );
@@ -55,7 +75,9 @@ function Progress({ t }: { t: Turn }) {
     const c = t.retrieved;
     const srow = (i: number, run: ReactLabel, done: ReactLabel) => (
       <div className={`step ${i < sc ? "done" : i === sc ? "run" : ""}`}>
-        <span className="ic">{i < sc ? <Check /> : <span className="ring" />}</span>
+        <span className="ic">
+          {i < sc ? <Check /> : <span className="ring" />}
+        </span>
         {i < sc ? done : run}
       </div>
     );
@@ -66,18 +88,27 @@ function Progress({ t }: { t: Turn }) {
           <span>범위의 노트 모으는 중…</span>,
           <span>
             노트 모으기 · {c?.pages_used ?? 0}페이지 {c?.chunks ?? 0}개 조각
-            {c?.truncated ? ` (전체 ${c.pages_total}페이지 중 최근 수정 순)` : ""}
+            {c?.truncated
+              ? ` (전체 ${c.pages_total}페이지 중 최근 수정 순)`
+              : ""}
           </span>,
         )}
         {srow(
           1,
           <>
-            <span>{t.studio?.title ?? "문서"} 작성 중 · 긴 문서는 1~2분 걸립니다</span>
+            <span>
+              {t.studio?.title ?? "문서"} 작성 중 · 긴 문서는 1~2분 걸립니다
+            </span>
             <Elapsed since={t.startedAt} />
           </>,
           <span>{t.studio?.title ?? "문서"} 작성</span>,
         )}
-        {t.studio?.kind !== "mindmap" && srow(2, <span>{sc === 2 ? "근거 검증 중…" : "근거 검증"}</span>, <span>근거 검증</span>)}
+        {t.studio?.kind !== "mindmap" &&
+          srow(
+            2,
+            <span>{sc === 2 ? "근거 검증 중…" : "근거 검증"}</span>,
+            <span>근거 검증</span>,
+          )}
       </div>
     );
   }
@@ -117,29 +148,64 @@ function Progress({ t }: { t: Turn }) {
           </>,
           <span>답변 작성</span>,
         )}
-        {row(2, <span>{cur === 2 ? "근거 검증 중…" : "근거 검증"}</span>, <span>근거 검증</span>)}
+        {row(
+          2,
+          <span>{cur === 2 ? "근거 검증 중…" : "근거 검증"}</span>,
+          <span>근거 검증</span>,
+        )}
       </div>
-      <div className="answer">
-        <div className="skel-box">
-          <div className="skel" style={{ width: "92%" }} />
-          <div className="skel" style={{ width: "64%" }} />
+      {t.draft?.length ? (
+        <div
+          className="draft"
+          aria-busy="true"
+          title="작성 중 · 근거 검증 전 초안입니다"
+        >
+          <AnswerBody a={draftAnswer(t)} />
         </div>
-      </div>
+      ) : (
+        <div className="answer">
+          <div className="skel-box">
+            <div className="skel" style={{ width: "92%" }} />
+            <div className="skel" style={{ width: "64%" }} />
+          </div>
+        </div>
+      )}
     </>
   );
 }
+
+const draftAnswer = (t: Turn): Answer => ({
+  question: t.q,
+  answerable: true,
+  sentences: t.draft ?? [],
+  sources: [],
+  confidence: "none",
+  retrieval_score: 0,
+  supported_ratio: 0,
+  dropped_citations: 0,
+  latency_ms: 0,
+});
 type ReactLabel = React.ReactNode;
 
 function Trust({ t, a, act }: { t: Turn; a: Answer; act: TurnActions }) {
   const [open, setOpen] = useState(false);
   const c = CONF[a.confidence] ?? CONF.low;
-  const weak = a.sentences.filter((s) => s.type !== "heading" && s.support !== "supported").length;
-  const label = a.confidence === "medium" && weak ? `${c.txt} · 확인 필요 ${weak}문장` : c.txt;
+  const weak = a.sentences.filter(
+    (s) => s.type !== "heading" && s.support !== "supported",
+  ).length;
+  const label =
+    a.confidence === "medium" && weak
+      ? `${c.txt} · 확인 필요 ${weak}문장`
+      : c.txt;
   const saved = act.isSaved(t);
   return (
     <>
       <div className="trust fade">
-        <button className="pill" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <button
+          className="pill"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+        >
           <span className={`c-dot ${c.dot}`} aria-hidden="true" />
           {label} · 출처 {a.sources.length}
           <ChevronDown />
@@ -155,7 +221,11 @@ function Trust({ t, a, act }: { t: Turn; a: Answer; act: TurnActions }) {
           <Copy />
           복사
         </button>
-        <button className="act" aria-pressed={saved} onClick={() => act.toggleSave(t)}>
+        <button
+          className="act"
+          aria-pressed={saved}
+          onClick={() => act.toggleSave(t)}
+        >
           <Star />
           저장
         </button>
@@ -170,13 +240,19 @@ function Trust({ t, a, act }: { t: Turn; a: Answer; act: TurnActions }) {
           {a.sentences
             .filter((s) => s.type !== "heading")
             .map((s, i) => {
-              const hit = s.citations[0] ? a.sources[s.citations[0] - 1] : undefined;
+              const hit = s.citations[0]
+                ? a.sources[s.citations[0] - 1]
+                : undefined;
               return (
                 <div key={i}>
                   <span className="t" title={s.text}>
                     {s.text.replace(/\n/g, " ")}
                   </span>
-                  <span style={{ color: s.support_score < 0.5 ? "var(--warn)" : "inherit" }}>
+                  <span
+                    style={{
+                      color: s.support_score < 0.5 ? "var(--warn)" : "inherit",
+                    }}
+                  >
                     {s.support_score.toFixed(2)}
                   </span>
                   <span>{hit ? hit.rerank_score.toFixed(2) : "—"}</span>
@@ -208,7 +284,8 @@ function Refusal({ t, a, act }: { t: Turn; a: Answer; act: TurnActions }) {
       </div>
       {a.closest ? (
         <p>
-          가장 가까운 기록: <b>“{a.closest.title}”</b> (관련도 낮음 · {a.closest.rerank_score.toFixed(2)})
+          가장 가까운 기록: <b>“{a.closest.title}”</b> (관련도 낮음 ·{" "}
+          {a.closest.rerank_score.toFixed(2)})
         </p>
       ) : (
         <p>관련 있는 기록이 없습니다.</p>
@@ -247,13 +324,20 @@ function Trace({ run }: { run: AgentRun }) {
     <details className="trace">
       <summary>
         <ChevronRight />
-        실행 과정 {run.steps.length}단계 ({run.steps.map((s) => TOOL_LABEL[s.tool] ?? s.tool).join(" → ")})
+        실행 과정 {run.steps.length}단계 (
+        {run.steps.map((s) => TOOL_LABEL[s.tool] ?? s.tool).join(" → ")})
       </summary>
       <ol>
         {run.steps.map((s, i) => (
           <li key={i}>
-            {TOOL_LABEL[s.tool] ?? s.tool}: {JSON.stringify(s.args).slice(0, 120)}
-            {!s.ok && <span style={{ color: "var(--bad)" }}> — {String(s.observation).slice(0, 80)}</span>}
+            {TOOL_LABEL[s.tool] ?? s.tool}:{" "}
+            {JSON.stringify(s.args).slice(0, 120)}
+            {!s.ok && (
+              <span style={{ color: "var(--bad)" }}>
+                {" "}
+                — {String(s.observation).slice(0, 80)}
+              </span>
+            )}
           </li>
         ))}
       </ol>
@@ -261,7 +345,15 @@ function Trace({ run }: { run: AgentRun }) {
   );
 }
 
-function Approval({ t, run, act }: { t: Turn; run: AgentRun; act: TurnActions }) {
+function Approval({
+  t,
+  run,
+  act,
+}: {
+  t: Turn;
+  run: AgentRun;
+  act: TurnActions;
+}) {
   const ap = run.approval!;
   const orig = String(ap.args.text ?? "");
   const [text, setText] = useState(orig);
@@ -287,7 +379,11 @@ function Approval({ t, run, act }: { t: Turn; run: AgentRun; act: TurnActions })
           </dd>
           <dt>내용</dt>
           <dd>
-            <textarea aria-label="추가할 내용" value={text} onChange={(e) => setText(e.target.value)} />
+            <textarea
+              aria-label="추가할 내용"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+            />
           </dd>
           {ap.thought && (
             <>
@@ -303,7 +399,9 @@ function Approval({ t, run, act }: { t: Turn; run: AgentRun; act: TurnActions })
           </button>
           <button
             className="btn primary"
-            onClick={() => act.decide(t.id, true, edited ? { ...ap.args, text } : undefined)}
+            onClick={() =>
+              act.decide(t.id, true, edited ? { ...ap.args, text } : undefined)
+            }
           >
             {edited ? "수정 후 실행" : "실행"}
           </button>
@@ -329,7 +427,13 @@ function ActionResult({ run, act }: { run: AgentRun; act: TurnActions }) {
               {!s.ok && ` — ${String(s.observation)}`}
             </span>
             {s.ok && obs.url && (
-              <a href="#" onClick={(e) => (e.preventDefault(), act.openNotion(obs.url!, "새 페이지"))}>
+              <a
+                href="#"
+                onClick={(e) => (
+                  e.preventDefault(),
+                  act.openNotion(obs.url!, "새 페이지")
+                )}
+              >
                 노션에서 보기
                 <ArrowUpRight />
               </a>
@@ -356,7 +460,15 @@ function StudioLine({ t }: { t: Turn }) {
   );
 }
 
-export default function TurnView({ t, act, generating }: { t: Turn; act: TurnActions; generating: boolean }) {
+export default function TurnView({
+  t,
+  act,
+  generating,
+}: {
+  t: Turn;
+  act: TurnActions;
+  generating: boolean;
+}) {
   const a = t.answer;
   return (
     <article className="turn" data-turn={t.id}>
@@ -367,15 +479,29 @@ export default function TurnView({ t, act, generating }: { t: Turn; act: TurnAct
         <div className="stopped fade">
           <CircleStop />
           생성을 중단했습니다.
-          <button className="btn ghost" style={{ marginLeft: "auto" }} onClick={() => act.retry(t)}>
+          <button
+            className="btn ghost"
+            style={{ marginLeft: "auto" }}
+            onClick={() => act.retry(t)}
+          >
             다시 생성
           </button>
         </div>
       )}
-      {generating && !a && !t.error && !t.stopped && t.run?.status !== "awaiting_approval" && <Progress t={t} />}
-      {t.run?.status === "awaiting_approval" && <Approval t={t} run={t.run} act={act} />}
-      {t.run?.status === "done" && t.run.answer?.kind === "action" && <ActionResult run={t.run} act={act} />}
-      {a && !a.answerable && t.mode !== "studio" && <Refusal t={t} a={a} act={act} />}
+      {generating &&
+        !a &&
+        !t.error &&
+        !t.stopped &&
+        t.run?.status !== "awaiting_approval" && <Progress t={t} />}
+      {t.run?.status === "awaiting_approval" && (
+        <Approval t={t} run={t.run} act={act} />
+      )}
+      {t.run?.status === "done" && t.run.answer?.kind === "action" && (
+        <ActionResult run={t.run} act={act} />
+      )}
+      {a && !a.answerable && t.mode !== "studio" && (
+        <Refusal t={t} a={a} act={act} />
+      )}
       {a && !a.answerable && t.mode === "studio" && (
         <div className="refuse fade" role="status">
           <div className="head">
@@ -400,7 +526,11 @@ export default function TurnView({ t, act, generating }: { t: Turn; act: TurnAct
               </button>
             )}
             <span className="sp" />
-            <button className="act" aria-pressed={act.isSaved(t)} onClick={() => act.toggleSave(t)}>
+            <button
+              className="act"
+              aria-pressed={act.isSaved(t)}
+              onClick={() => act.toggleSave(t)}
+            >
               <Star />
               저장
             </button>
@@ -413,7 +543,9 @@ export default function TurnView({ t, act, generating }: { t: Turn; act: TurnAct
           {t.doneMs !== undefined && t.mode !== "studio" && (
             <div className="summary-line fade">
               <Check />
-              {t.mode === "agent" && t.run ? `에이전트 ${t.run.steps.length}단계 · ` : ""}
+              {t.mode === "agent" && t.run
+                ? `에이전트 ${t.run.steps.length}단계 · `
+                : ""}
               {(t.doneMs / 1000).toFixed(1)}초 · 근거 검증 완료
             </div>
           )}

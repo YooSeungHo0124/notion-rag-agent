@@ -11,10 +11,13 @@ on our side.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import shutil
 import subprocess
+import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 from notion_agent.llm.base import LLMClient, LLMError, LLMResponse
@@ -80,6 +83,73 @@ class ClaudeCLIClient(LLMClient):
                    llm__token_count__completion=r.usage.get("output_tokens", 0),
                    latency_ms=r.latency_ms)
             return r
+
+    def complete_stream(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        json_schema: dict[str, Any] | None = None,
+        on_partial: Callable[[str], None] | None = None,
+    ) -> LLMResponse:
+        """stream-json with partial messages; falls back to `complete` on any stream error."""
+        if on_partial is None:
+            return self.complete(prompt, system=system, json_schema=json_schema)
+        with span("claude -p (stream)", "LLM", input=prompt, llm__model_name=self.model,
+                  llm__system=system) as sp:
+            try:
+                r = self._stream(prompt, system, json_schema, on_partial)
+            except (LLMError, OSError, subprocess.TimeoutExpired) as exc:
+                sp.set(stream_error=str(exc)[:200])
+                r = self._complete(prompt, system, json_schema)
+            sp.output(r.structured if r.structured is not None else r.text)
+            sp.set(llm__token_count__prompt=r.usage.get("input_tokens", 0),
+                   llm__token_count__completion=r.usage.get("output_tokens", 0),
+                   latency_ms=r.latency_ms)
+            return r
+
+    def _stream(
+        self, prompt: str, system: str | None, json_schema: dict[str, Any] | None,
+        on_partial: Callable[[str], None],
+    ) -> LLMResponse:
+        cmd = self.build_command(prompt, system, json_schema)
+        i = cmd.index("--output-format")
+        cmd[i + 1 : i + 2] = ["stream-json", "--verbose", "--include-partial-messages"]
+        start = time.monotonic()
+        proc = subprocess.Popen(  # noqa: S603 - fixed binary, no shell
+            cmd, stdin=subprocess.PIPE if self._via_stdin(prompt) else subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        timer = threading.Timer(self.timeout_s, proc.kill)
+        timer.start()
+        try:
+            if self._via_stdin(prompt):
+                assert proc.stdin is not None
+                proc.stdin.write(prompt)
+                proc.stdin.close()
+            buf, final = "", None
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if ev.get("type") == "stream_event":
+                    d = (ev.get("event") or {}).get("delta") or {}
+                    piece = d.get("partial_json" if json_schema else "text") or ""
+                    if piece:
+                        buf += piece
+                        # a UI callback must not kill the call
+                        with contextlib.suppress(Exception):
+                            on_partial(buf)
+                elif ev.get("type") == "result":
+                    final = ev
+            proc.wait()
+        finally:
+            timer.cancel()
+        if final is None:
+            raise LLMError(f"stream ended without result (exit={proc.returncode})")
+        done = subprocess.CompletedProcess(cmd, proc.returncode, json.dumps(final), "")
+        return self._parse(done, json_schema, int((time.monotonic() - start) * 1000))
 
     def _complete(
         self, prompt: str, system: str | None, json_schema: dict[str, Any] | None
