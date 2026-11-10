@@ -53,6 +53,51 @@ def _split_long(text: str, max_chars: int, overlap: int) -> list[str]:
     return out
 
 
+def _split_code(text: str, max_chars: int) -> list[str]:
+    """Split an oversized code block so every part is a balanced ``` fence (lang kept)."""
+    if not text.startswith("```"):
+        return _split_long(text, max_chars, 0)
+    opener = text.split("\n", 1)[0]
+    parts = _split_long(text, max_chars - len(opener) - 5, 0)
+    out = []
+    for i, part in enumerate(parts):
+        if i > 0 and not part.startswith("```"):
+            part = f"{opener}\n{part}"
+        if part.count("```") % 2 == 1:
+            part = part.rstrip("\n") + "\n```"
+        out.append(part)
+    return out
+
+
+def _common_prefix(a: list[str], b: list[str]) -> list[str]:
+    out = []
+    for x, y in zip(a, b, strict=False):
+        if x != y:
+            break
+        out.append(x)
+    return out
+
+
+def _merge_small(
+    raw: list[tuple[list[str], list[str], str]], min_chars: int, max_chars: int
+) -> list[tuple[list[str], list[str], str]]:
+    """Merge a tiny chunk (e.g. a heading with one line) into its neighbour when they fit.
+
+    The heading text itself is part of the chunk body, so the merged chunk keeps the
+    common heading path as context without losing the inner heading.
+    """
+    out: list[tuple[list[str], list[str], str]] = []
+    for hp, ids, text in raw:
+        if out:
+            php, pids, ptext = out[-1]
+            small = len(text) < min_chars or len(ptext) < min_chars
+            if small and len(ptext) + 2 + len(text) <= max_chars:
+                out[-1] = (_common_prefix(php, hp), pids + ids, f"{ptext}\n\n{text}")
+                continue
+        out.append((hp, ids, text))
+    return out
+
+
 def _join(pieces: list[_Piece]) -> str:
     return "\n\n".join(p.text for p in pieces)
 
@@ -93,7 +138,8 @@ def chunk_page(page: NotionPage, cfg: ChunkingConfig) -> list[Chunk]:
                 if cur:
                     raw.append((sec.heading_path, [x.block_id for x in cur], _join(cur)))
                     cur = []
-                for part in _split_long(p.text, max_c, 0 if p.is_code else ov):
+                parts = _split_code(p.text, max_c) if p.is_code else _split_long(p.text, max_c, ov)
+                for part in parts:
                     raw.append((sec.heading_path, [p.block_id], part))
                 carry = ""
                 continue
@@ -108,6 +154,9 @@ def chunk_page(page: NotionPage, cfg: ChunkingConfig) -> list[Chunk]:
             cur.append(p)
         if cur:
             raw.append((sec.heading_path, [x.block_id for x in cur], _join(cur)))
+
+    if cfg.min_chars:
+        raw = _merge_small(raw, cfg.min_chars, max_c)
 
     chunks: list[Chunk] = []
     for idx, (hp, ids, text) in enumerate(raw):

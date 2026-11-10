@@ -5,6 +5,7 @@ llm:
 chunking:
   max_chars: 1200
   overlap_chars: 150
+  min_chars: 200
 
 embedding:
   dense_model: Qwen/Qwen3-Embedding-4B

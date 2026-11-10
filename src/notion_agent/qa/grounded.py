@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from notion_agent.llm.base import LLMClient
+from notion_agent.observability.tracing import span
 from notion_agent.rag.reranker import RerankerProtocol
 from notion_agent.rag.retriever import Hit, Retriever
 from notion_agent.rag.store import SearchFilters
@@ -33,6 +34,8 @@ SYSTEM_PROMPT = """너는 사용자의 개인 노션 기록만을 근거로 답�
 - 답변을 문장 단위로 나누고, 각 문장에 근거가 되는 소스 id를 citations에 넣는다.
 - 소스에 답이 없으면 answerable=false로 하고 sentences는 비워 둔다.
 - 기록끼리 내용이 다르면 날짜와 함께 둘 다 언급한다.
+- 질문이 특정 조건(설정값·날짜·대상)을 물으면 그 조건에 해당하는 값을 먼저 정확히 답하고, 다른 조건의 값은 섞지 않는다.
+- 질문이 묻는 항목(수치·원인·방법)을 소스에 있는 범위에서 빠짐없이 답한다. 질문과 무관한 부가 설명은 덧붙이지 않는다.
 - 질문과 같은 언어로 간결하게 답한다. URL은 쓰지 않는다."""
 
 ANSWER_SCHEMA = {
@@ -113,6 +116,16 @@ class GroundedQA:
 
     def answer_from_hits(self, question: str, hits: list[Hit]) -> Answer:
         """Grounded answer over already-retrieved hits (used by the agent's writer node)."""
+        with span("grounded_answer", "CHAIN", input=question, n_hits=len(hits)) as sp:
+            a = self._answer_from_hits(question, hits)
+            sp.output(" ".join(s.text for s in a.sentences) or "(abstain)")
+            sp.set(answerable=a.answerable, confidence=a.confidence,
+                   supported_ratio=round(a.supported_ratio, 3),
+                   retrieval_score=round(a.retrieval_score, 3),
+                   dropped_citations=a.dropped_citations)
+            return a
+
+    def _answer_from_hits(self, question: str, hits: list[Hit]) -> Answer:
         top = hits[0].rerank_score if hits else 0.0
         if not hits or not hits[0].answerable:
             return Answer(question=question, answerable=False, retrieval_score=top)

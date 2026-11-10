@@ -18,6 +18,7 @@ import time
 from typing import Any
 
 from notion_agent.llm.base import LLMClient, LLMError, LLMResponse
+from notion_agent.observability.tracing import span
 
 DEFAULT_SYSTEM = "You are a helpful assistant."
 
@@ -66,6 +67,19 @@ class ClaudeCLIClient(LLMClient):
         *,
         system: str | None = None,
         json_schema: dict[str, Any] | None = None,
+    ) -> LLMResponse:
+        with span("claude -p", "LLM", input=prompt, llm__model_name=self.model,
+                  llm__system=system, llm__invocation_parameters={"json_schema": bool(json_schema)},
+                  ) as sp:
+            r = self._complete(prompt, system, json_schema)
+            sp.output(r.structured if r.structured is not None else r.text)
+            sp.set(llm__token_count__prompt=r.usage.get("input_tokens", 0),
+                   llm__token_count__completion=r.usage.get("output_tokens", 0),
+                   latency_ms=r.latency_ms)
+            return r
+
+    def _complete(
+        self, prompt: str, system: str | None, json_schema: dict[str, Any] | None
     ) -> LLMResponse:
         cmd = self.build_command(prompt, system, json_schema)
         last_err: Exception | None = None

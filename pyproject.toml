@@ -28,6 +28,12 @@ rag = [
 ]
 # F7: web UI server
 api = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
+trace = [
+    "openinference-instrumentation-langchain>=0.1.82",
+    "openinference-semantic-conventions>=0.1.43",
+    "opentelemetry-exporter-otlp-proto-http>=1.45.2",
+    "opentelemetry-sdk>=1.45.2",
+]
 
 [project.scripts]
 nra = "notion_agent.cli:app"
@@ -65,3 +71,4 @@ pythonpath = ["src"]
 [tool.ruff.lint.per-file-ignores]
 "eval/*" = ["E501"]  # long Korean prompt/report strings
 "src/notion_agent/agent/graph.py" = ["E501"]  # planner prompt
+"src/notion_agent/qa/grounded.py" = ["E501"]  # answer prompt

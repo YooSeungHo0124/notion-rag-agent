@@ -21,6 +21,7 @@ class LLMConfig(BaseModel):
 class ChunkingConfig(BaseModel):
     max_chars: int = 1200
     overlap_chars: int = 150
+    min_chars: int = 200  # merge smaller chunks into a neighbour (0 = off)
 
 
 class EmbeddingConfig(BaseModel):
