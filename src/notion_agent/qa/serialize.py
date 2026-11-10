@@ -46,4 +46,5 @@ def answer_to_json(a: Answer) -> dict[str, Any]:
         "supported_ratio": round(a.supported_ratio, 4),
         "dropped_citations": a.dropped_citations,
         "latency_ms": a.latency_ms,
+        "followups": a.followups,
     }

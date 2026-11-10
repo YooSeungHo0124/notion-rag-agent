@@ -191,7 +191,7 @@ export default function ChatPanel({ messages, onAsk, onDecide, onSave, disabledR
               )}
               {m.answer && (
                 <div className="group/answer">
-                  <AnswerView a={m.answer} />
+                  <AnswerView a={m.answer} onFollowup={busy ? undefined : (f) => onAsk(f, !!m.agentMode)} />
                   {m.answer.answerable && (
                     <button
                       onClick={() => onSave(m)}

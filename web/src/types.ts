@@ -1,7 +1,16 @@
 export type Support = "supported" | "partial" | "unsupported";
 export type Confidence = "high" | "medium" | "low" | "none";
 
-export type BlockType = "text" | "table" | "steps" | "code" | "chart";
+export type BlockType =
+  | "summary"
+  | "heading"
+  | "text"
+  | "callout"
+  | "table"
+  | "steps"
+  | "code"
+  | "chart"
+  | "flow";
 
 export interface Sentence {
   text: string;
@@ -19,6 +28,9 @@ export interface Sentence {
     labels?: string[];
     values?: number[];
     unit?: string;
+    level?: "note" | "warning" | "conflict";
+    nodes?: string[];
+    notes?: string[];
   };
   note?: string;
 }
@@ -56,6 +68,7 @@ export interface Answer {
   dropped_citations: number;
   latency_ms: number;
   total_ms?: number;
+  followups?: string[];
 }
 
 export interface PageSource {
