@@ -182,3 +182,21 @@ def test_studio_mindmap_cleans_citations(env):
 def test_studio_rejects_unknown_kind(env):
     c, _, _ = env
     assert c.post("/api/studio/stream", json={"kind": "poem"}).status_code == 422
+
+
+def test_review_questions_are_not_judged(env):
+    c, llm, _ = env
+    orig = llm.complete
+
+    def complete(prompt, *, system=None, json_schema=None):
+        r = orig(prompt, system=system, json_schema=json_schema)
+        r.structured["blocks"].append(
+            {"type": "text", "text": "Q. 무엇을 재시작하나?", "citations": ["S2"]}
+        )
+        return r
+
+    llm.complete = complete
+    res = _sse(c.post("/api/studio/stream", json={"kind": "study"}))[-1][1]["answer"]
+    q = res["sentences"][-1]
+    assert q["text"].startswith("Q.") and q["support"] == "supported"
+    assert res["supported_ratio"] == round(2 / 3, 4)  # summary+table ok, moon not; Q excluded

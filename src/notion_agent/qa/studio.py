@@ -19,7 +19,13 @@ from typing import Any, Literal
 
 from notion_agent.llm import LLMClient
 from notion_agent.observability.tracing import span
-from notion_agent.qa.grounded import ANSWER_SCHEMA, SYSTEM_PROMPT, Answer, GroundedQA
+from notion_agent.qa.grounded import (
+    ANSWER_SCHEMA,
+    SYSTEM_PROMPT,
+    Answer,
+    GroundedQA,
+    _confidence,
+)
 from notion_agent.rag.retriever import Hit
 from notion_agent.rag.store import QdrantStore, SearchFilters, build_filter
 
@@ -315,6 +321,16 @@ class Studio:
             r.title, raw, hits, 1.0, r.answer.latency_ms if r.answer else 0, src_text=src_with_date
         )
         a.followups = [f.strip() for f in data.get("followups") or [] if f.strip()][:5]
+        # review questions ("Q. ...") ask, they claim nothing: not judged, not in the ratio
+        claims = []
+        for x in a.sentences:
+            if x.type == "text" and x.text.lstrip().startswith("Q."):
+                x.support, x.support_score, x.note = "supported", 1.0, ""
+            elif x.type != "heading":
+                claims.append(x)
+        if claims:
+            a.supported_ratio = sum(x.support == "supported" for x in claims) / len(claims)
+            a.confidence = _confidence(1.0, a.supported_ratio)
         r.answer = a
         return r
 
