@@ -100,5 +100,34 @@ def sync(
         raise typer.Exit(2)
 
 
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", help="Bind address (keep local: no auth)"),
+    port: int = typer.Option(8000, help="Port"),
+    demo: bool = typer.Option(False, "--demo", help="In-memory fake data, no models (UI dev)"),
+) -> None:
+    """Run the web UI + API server (F7)."""
+    import logging
+
+    try:
+        import uvicorn
+
+        from notion_agent.api.app import create_app
+    except ImportError as exc:
+        console.print(f"[red]API extra not installed: {exc}[/red] (uv sync --extra api)")
+        raise typer.Exit(1) from exc
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        console.print(f"[yellow]경고: {host} 로 바인딩합니다. 인증이 없으니 주의하세요.[/yellow]")
+    loader = None
+    if demo:
+        from notion_agent.api.demo import load_demo_services
+
+        loader = load_demo_services
+    console.print(f"http://{host}:{port}  (models load in the background; see /api/health)")
+    uvicorn.run(create_app(loader), host=host, port=port, log_level="info")
+
+
 if __name__ == "__main__":
     app()
