@@ -1,43 +1,317 @@
-# notion-rag-agent
+# 내 노트 — Notion RAG Agent
 
-Personal Notion AI agent: a NotebookLM-style assistant over my own Notion, with hybrid RAG,
-LangGraph tool-calling, MCP, grounded citations and evaluation.
+> **내 노션 600여 페이지에서 답을 찾고, 그 답이 어디서 왔는지 한 번에 대조할 수 있게 해 주는 개인 연구 도구**
 
-> Status: **F0** (project skeleton + LLM adapter). Roadmap and design notes live in [`docs/`](docs/).
+업무 일지, 트러블슈팅, 설치 문서, 실험 기록을 노션에 몇 년씩 쌓다 보면 "그때 그 설정값 뭐였지?"가 매일 생깁니다.
+노션 검색은 단어가 정확히 맞아야 찾아 주고, 범용 AI는 내 기록을 모릅니다.
+이 프로젝트는 **내 노션만을 근거로 답하고, 모든 문장에 원문 위치를 달고, 근거가 없으면 지어내지 않는** 에이전트입니다.
+NotebookLM의 경험을 내 노션 위에 직접 구현했습니다.
 
-## Architecture (target)
+![데모: 질문 → 진행 단계 → 근거가 달린 블록형 답변과 관련 이미지 → 출처 클릭 → 노션 원문 위치](docs/assets/demo.gif)
+
+<sub>▶ 원본 영상: [docs/assets/demo.mp4](docs/assets/demo.mp4) (45초) · 질문 "OCR 겹친 문자 구분 문제 어떻게 됐어?"</sub>
+
+---
+
+## 한눈에 보기
+
+| | |
+|---|---|
+| **무엇을** | 노션을 동기화해 색인하고, 질문하면 근거 문장 번호가 달린 답변을 만듭니다. 결론, 표, 단계, 코드, 흐름도, 관련 이미지를 블록으로 보여줍니다 |
+| **차별점** | 답변의 **모든 블록을 원문과 다시 대조해 검증**합니다. 표나 차트의 숫자가 원문에 없으면 경고하고, 근거가 약하면 답하지 않습니다 |
+| **에이전트** | LangGraph로 여러 번 검색하고 페이지를 읽습니다. 노션에 쓰기 전에는 **반드시 사람의 승인**을 받습니다(인터럽트) |
+| **연동** | 읽기 전용 MCP 서버(`my-memory`)를 제공합니다. Claude Code 같은 MCP 클라이언트에서 내 노트를 검색할 수 있습니다 |
+| **측정** | 자체 평가 세트로 검색 정확도와 답변 정확도를 측정합니다. Phoenix로 모든 단계를 추적(tracing)합니다 |
+| **비용** | 답변 생성에는 **Claude 구독(`claude -p`)**을 쓰고, 임베딩과 재정렬은 **로컬 GPU** 모델로 돌립니다. 유료 API 키는 필요 없습니다 |
+
+---
+
+## 쉽게 말하면 (ELI5)
+
+> 내 노트를 전부 읽어 둔 **사서**가 있다고 생각해 보세요.
+
+1. **정리:** 사서는 노트를 문단 단위 카드로 잘라 둡니다. 카드마다 "어느 책, 몇 장, 어느 소제목"을 적어 둡니다. → *청킹 + 색인*
+2. **찾기:** 질문을 받으면 뜻이 비슷한 카드와 단어가 겹치는 카드를 50장 뽑습니다. 그다음 질문과 한 장씩 꼼꼼히 비교해 5장만 남깁니다. → *하이브리드 검색 + 재정렬*
+3. **답하기:** 그 5장만 보고 답을 씁니다. 문장마다 "이건 3번 카드에 있어요"라고 번호를 붙입니다. → *근거 기반 생성*
+4. **검사하기:** 다 쓴 뒤 문장마다 정말 그 카드에 그런 내용이 있는지 다시 확인합니다. 없으면 빨간 줄을 긋고, 카드가 하나도 안 맞으면 "기록에 없어요"라고 말합니다. → *출처 검증, 답변 거절*
+5. **보여주기:** 번호를 누르면 원본 노트의 그 자리를 펴서 노란 형광펜으로 표시해 줍니다. → *출처 패널*
+
+---
+
+## 전체 구조
+
+```mermaid
+flowchart LR
+  subgraph Ingest["① 동기화 (nra sync)"]
+    N[(Notion API)] --> R[NotionReader<br/>페이지·블록·DB 속성]
+    R --> C[소제목 기반 청킹<br/>+ 맥락 접두어]
+    C --> E1[Qwen3-Embedding-4B<br/>의미 벡터]
+    C --> E2[bge-m3<br/>키워드 가중치]
+    E1 & E2 --> Q[(Qdrant<br/>named vectors)]
+  end
+
+  subgraph Answer["② 질문 → 답변"]
+    U([질문]) --> H[하이브리드 검색<br/>RRF top-50]
+    Q -.-> H
+    H --> RR[bge-reranker-v2-m3<br/>top-5]
+    RR -->|근거 약함| X[답변 거절<br/>+ 가장 가까운 기록]
+    RR --> L[Claude<br/>claude -p, JSON 스키마]
+    L --> V[블록별 출처 검증<br/>문장·숫자·코드 대조]
+    V --> UI[블록형 답변<br/>+ 신뢰도 + 관련 이미지]
+  end
+
+  subgraph Agent["③ 에이전트 모드"]
+    UI2([질문]) --> G[LangGraph]
+    G <--> T[도구<br/>검색·페이지 읽기·타임라인]
+    G -->|쓰기| AP{사람 승인}
+    AP -->|승인| NW[(Notion 쓰기)]
+  end
+
+  UI --> P[출처 패널<br/>원문 뷰어 + 인용 블록 하이라이트]
+  P -.->|노션에서 열기| N
+```
+
+- **로컬에 있는 것:** 노트 데이터, 벡터 DB, 임베딩, 재정렬, 검증은 모두 이 PC 안에 있습니다.
+- **외부로 나가는 것:** 답변을 쓸 때 Claude에게 보내는 질문과 상위 조각 5개뿐입니다.
+- **서버 공개 범위:** `127.0.0.1`에만 엽니다. 다른 PC에서는 접속할 수 없습니다.
+
+---
+
+## 어떻게 동작하나
+
+### 1. 동기화: 노션을 "검색 가능한 카드"로
+
+| 단계 | 구현 | 이유 |
+|---|---|---|
+| 수집 | `notion-client` 3.x (API 2025-09-03, data sources). 초당 약 3회로 제한하고, 429/5xx는 재시도 | 노션 API 사용량 제한을 지키기 위해 |
+| 증분 동기화 | 페이지별 `content_hash`를 SQLite에 저장해, 바뀐 페이지만 다시 색인 | 600페이지 전체를 다시 색인하면 약 15분 걸림 |
+| DB 행 | 데이터베이스의 속성(날짜, 상태, 태그)을 본문 앞에 텍스트 블록으로 넣음 | 본문이 빈 일지 행도 검색되도록 |
+| 청킹 | 소제목 경계를 지키며 최대 1200자, 겹침 150자. 200자 미만 조각은 이웃과 병합. 코드 펜스는 쪼개도 짝을 맞춤 | 문맥이 끊기지 않고 너무 잘게 쪼개지지 않게 |
+| 맥락 접두어 | `[페이지 제목 > 경로 > 소제목 \| 날짜]`를 붙여서 임베딩 | 같은 "설치 방법"이라도 어느 프로젝트의 것인지 구분 |
+| 저장 | Qdrant의 named vectors(`dense` + `sparse`). 청크 id는 `sha256 → UUID`로 고정해 같은 청크를 다시 넣어도 중복되지 않음 | 재실행이나 중단 후 재시작에도 안전 |
+
+### 2. 검색: 넓게 뽑고 정밀하게 고르기
+
+- **하이브리드 검색:** 의미 검색(Qwen3-Embedding-4B)과 키워드 검색(bge-m3 lexical)을 Qdrant 서버 측 **RRF**로 합쳐 후보 50개를 뽑습니다.
+  - 의미 검색만 쓰면 `EVENT_API_KEY`, `yolo26x` 같은 고유명사를 놓칩니다.
+  - 키워드 검색만 쓰면 바꿔 말한 질문("메모리 터졌을 때")을 놓칩니다.
+- **재정렬:** `bge-reranker-v2-m3` cross-encoder로 질문과 후보를 한 쌍씩 다시 채점해 5개만 남깁니다.
+  - 평가에서 정답 청크 1위 비율이 **65% → 80%**로 올랐습니다(아래 평가 참고).
+- **근거가 없으면 거절:** 1위 점수가 0.2 미만이면 Claude를 부르지 않고 "기록에 없음"으로 답합니다. 이때 가장 가까운 기록을 함께 보여줍니다.
+
+### 3. 근거 기반 답변과 검증
+
+```mermaid
+sequenceDiagram
+  participant UI as 브라우저
+  participant API as FastAPI (SSE)
+  participant R as Retriever (GPU)
+  participant C as Claude (claude -p)
+  participant V as 검증기 (reranker)
+  UI->>API: POST /api/ask/stream
+  API-->>UI: event: retrieving
+  API->>R: 하이브리드 검색 + 재정렬
+  API-->>UI: event: retrieved (조각 수, 문서 제목)
+  API->>C: [S1]~[S5] 소스 + 질문 + 블록 JSON 스키마
+  API-->>UI: event: generating
+  C-->>API: blocks[summary|text|table|steps|code|chart|flow|callout] + citations
+  API-->>UI: event: verifying
+  API->>V: 블록별로 인용한 원문과 대조
+  API-->>UI: event: answer (블록 + 출처 + 신뢰도 + 후속 질문)
+  UI->>API: POST /api/answer/images (답변 표시 후)
+```
+
+Claude는 **도구가 꺼진 상태**(`--tools ""`, `--strict-mcp-config`)로 정해진 JSON 스키마에 맞는 답만 돌려줍니다. 나머지는 우리 코드가 처리합니다.
+
+- **인용 정리:** 존재하지 않는 출처 번호는 버리고, 실제로 인용된 출처만 1번부터 다시 번호를 매깁니다.
+- **문장 검증:** 재정렬 모델로 *답변 문장 vs 인용한 원문*을 채점합니다. ≥0.5는 근거 있음, ≥0.2는 일부 확인, 그 미만은 근거 약함(점선 밑줄)입니다.
+- **숫자 검증:** 표나 차트 속 숫자가 인용한 원문에 있는지 직접 대조합니다.
+  - 반올림은 허용합니다(771.8 → 772).
+  - 원문에 없는 숫자는 "출처에 없는 수치"로 경고합니다.
+  - Claude가 출처 번호를 빠뜨렸으면, 그 숫자가 있는 조각을 찾아 출처를 붙여 줍니다.
+- **코드 검증:** 코드 블록은 줄 단위로 원문에 그대로 있는지 확인합니다.
+- **신뢰도:** 검색 점수와 근거 있는 문장 비율로 `근거 충분 / 일부만 확인 / 근거 약함`을 정합니다.
+
+> 신뢰도는 "내 노트에 근거하는가"를 뜻하며, 노트 내용 자체가 사실인지는 보장하지 않습니다.
+
+### 4. Generative UI: 답의 모양까지 구조화
+
+자유 형식의 마크다운 대신 **정해진 블록 타입**만 허용합니다(Structured Outputs). 화면은 React 컴포넌트 레지스트리가 블록 타입별로 그립니다.
+
+| 블록 | 쓰임 | 화면 |
+|---|---|---|
+| `summary` | 결론 1~2문장 (항상 맨 위) | 강조 박스 |
+| `heading` | 긴 답의 구획 | 소제목 (검증 대상 아님) |
+| `text` | 문장 하나 | 본문. `**굵게**`, `` `값` `` (더블클릭하면 복사) |
+| `table` / `chart` | 같은 기준의 비교 / 수치 2개 이상 | 숫자 열 오른쪽 정렬 / 가로 막대 |
+| `steps` / `code` | 절차 / 명령어 | 번호 단계 / 복사 버튼 |
+| `flow` | 구성요소 흐름 | 노드 카드 + 화살표 |
+| `callout` | 참고, 주의, **기록 불일치** | 날짜가 다른 기록이 서로 다르면 함께 표시 |
+
+AI가 HTML이나 JS를 직접 만들어 실행하는 아티팩트 방식은 쓰지 않았습니다. 생성된 코드 속 내용이 노트에서 왔는지 **검증할 수 없기 때문**입니다.
+
+### 5. 관련 이미지: 재색인 없이, 확실할 때만
+
+노션 이미지는 색인하지 않습니다. 대신 답변이 나온 뒤 **인용된 블록 주변**에서 노션 API로 찾아옵니다. 관련 없는 이미지는 없는 것보다 나쁘므로, 아래 조건을 **모두** 통과한 이미지만 넣습니다.
+
+1. **위치:** 인용된 블록 안(토글, 컬럼)에 있거나, 같은 소제목 구간에서 2블록 이내
+2. **설명:** 캡션이 있거나, 앞뒤 설명이 20자 이상 (한 단어짜리 주변 글로는 판단하지 않음)
+3. **관련도:** 재정렬 모델 점수가 0.5 이상 (*그 출처를 인용한 문장 vs 캡션·소제목·주변 글*)
+4. **최대 2장:** 그 문장 바로 아래에 넣습니다. 노션 파일 링크는 1시간 뒤 만료되므로 서버가 받아서 전달합니다(직접 고른 이미지만 허용).
+
+### 6. 에이전트 모드 (LangGraph)
+
+```mermaid
+stateDiagram-v2
+  [*] --> planner
+  planner --> tools: 읽기 도구 (검색·페이지·타임라인)
+  tools --> planner: 관찰 결과
+  planner --> approval: 쓰기 도구 (페이지 추가·생성)
+  approval --> tools: 승인 (내용 수정 가능)
+  approval --> planner: 거부
+  planner --> writer: 근거 충분 / 4단계 도달
+  writer --> [*]: 검증된 답변 (3번과 동일)
+```
+
+- **판단(planner):** Claude가 다음 행동을 JSON으로 고릅니다. 질문을 키워드로 바꿔 검색하고, 결과가 부족하면 다른 검색어로 다시 찾습니다.
+- **도구 실행:** 우리 코드가 pydantic 스키마로 인자를 검증한 뒤 실행합니다. 오류는 프로그램을 멈추지 않고 "관찰 결과"로 판단 단계에 되돌립니다.
+- **승인:** 쓰기 도구는 `interrupt()`로 멈추고 화면의 승인 카드를 기다립니다. 상태는 SQLite 체크포인트에 저장되므로, 서버가 재시작해도 승인 대기가 유지됩니다.
+- **쓰기 범위:** 덧붙이기와 하위 페이지 생성만 허용합니다. 삭제나 보관 도구는 아예 없습니다.
+- **메모리:** 같은 대화 안에서는 후속 질문을 이해합니다. "기억해"라고 하면 그 사실을 로컬 장기 기억(SQLite)에 저장합니다.
+
+### 7. 출처 패널: 답변과 원문을 나란히
+
+- 출처 번호를 누르면 오른쪽 패널에 노션 페이지가 열리고, **인용 블록이 하이라이트되며 자동 스크롤**됩니다.
+- 반대로, 그 출처를 인용한 답변 문장들도 함께 강조됩니다.
+- **불러오는 순서:** 색인된 내용을 즉시(약 10ms) 보여주고, 노션 API로 받은 최신본이 도착하면 교체합니다. 큰 페이지는 하위 블록 수만큼 API를 호출해 수십 초 걸리기 때문입니다.
+- **노션 원본은 별도 창으로:** 노션은 `x-frame-options: SAMEORIGIN`이라 페이지 안에 넣을 수 없습니다. 그래서 "노션에서 열기"는 **이름이 정해진 창 하나를 재사용**합니다. OS 화면 분할로 진짜 노션과 나란히 볼 수 있습니다.
+
+---
+
+## 평가
+
+"청크를 잘 나눴는가", "질문을 이해하고 정확히 답하는가"를 수치로 확인하려고 평가 도구를 직접 만들었습니다([`eval/`](eval)).
+
+- **평가 세트:** 실제 청크에서 Claude가 만든 질문 40개(문구를 그대로 쓰지 않고 바꿔 말함)와, 노트에 답이 없는 질문 6개입니다.
+- **채점:** 검색은 정답 청크와 페이지의 순위로 Recall@k와 MRR을 계산합니다. 답변은 Claude가 참조 답과 비교해 정답, 부분 정답, 오답으로 채점합니다.
+
+| 지표 | 기준선 | 청크·프롬프트 개선 후 | 에이전트 모드 | 블록형 답변 |
+|---|---|---|---|---|
+| 정답 청크 1위 (재정렬 전 → 후) | 65% → 80% | 65% → 78% | – | 65% → 78% |
+| 정답 페이지 1위 | 100% | 100% | – | 100% |
+| **답변 정확** | 90% | 88% | 88% | **90%** |
+| 정답 + 부분 정답 | 100% | 97% | **100%** | 97% |
+| 노트에 없는 질문 거절 | 100%* | 100% | 100% | 100% |
+| 답이 있는데 거절한 비율 | 0% | 0% | 0% | 2.5% |
+| 평균 응답 시간 | 6.5초 | 7.0초 | 28.5초 | 6.0초 |
+
+<sub>* 처음 측정값은 75%였습니다. 실패한 2문항을 확인해 보니, "답이 없다"고 표시한 질문인데 실제로는 노트에 답이 있었습니다(평가 데이터 오류). 그래서 두 문항을 빼고 다시 계산했습니다.</sub>
+
+**배운 점**
+- **재정렬 효과가 가장 큽니다.** 하이브리드 검색만으로는 정답 청크 1위가 65%였는데, 재정렬 후 80%가 됐습니다.
+- **에이전트 모드가 항상 좋은 건 아닙니다.** 정확도는 같은데 4배 느립니다. 그래서 기본은 단일 검색으로 두고, 여러 번 찾거나 노션에 기록할 때만 에이전트를 씁니다.
+- **청크 개선 효과는 측정되지 않았습니다.** 짧은 청크 병합으로 아주 짧은 청크가 29%에서 19%로, 청크 수가 2428개에서 1934개로 줄었습니다. 하지만 같은 설정을 두 번 돌렸을 때 결과가 같아 오차 범위를 재지 못했고, 정답 청크 1위 2%p 차이는 40문항 중 1문항이라 개선이라고 보기 어렵습니다.
+- **평가 데이터의 한계:** 질문을 Claude가 만들어서 실제 질문보다 쉬울 수 있습니다. 직접 쓴 질문 세트가 다음 과제입니다.
+
+---
+
+## 기술 스택
+
+| 영역 | 선택 | 고른 이유 |
+|---|---|---|
+| LLM | **Claude Sonnet** via `claude -p` (구독), `LLMClient` 추상화 | 유료 API 없이 개인 사용. 설정 한 줄로 Anthropic API로 교체 가능 |
+| 임베딩 (의미) | **Qwen3-Embedding-4B** | 한국어·영어가 섞인 기술 노트에 강하고, 16GB GPU에서 동작 |
+| 임베딩 (키워드) | **bge-m3** lexical weights | 고유명사, 명령어, 변수명 매칭 |
+| 재정렬·검증 | **bge-reranker-v2-m3** | 검색 재정렬과 답변 문장 검증에 같은 모델을 재사용 |
+| 벡터 DB | **Qdrant** (임베디드 모드, named vectors, 서버 측 RRF) | 의미 벡터와 키워드 벡터를 한 컬렉션에서 하이브리드 검색 |
+| 에이전트 | **LangGraph** 1.2 (interrupt, SQLite checkpointer) | 승인 대기와 재개를 그래프 상태로 안전하게 처리 |
+| 도구 호출 | 자체 `ToolRegistry` (pydantic → JSON 스키마) | 어떤 도구를 실행할지 LLM 제공자에 맡기지 않음. 승인 게이트를 우회할 수 없음 |
+| MCP | **mcp** 2.x `MCPServer` (stdio, 읽기 전용) | 같은 레지스트리를 외부 클라이언트에 노출 |
+| 수집 | **notion-client** 3.1 (API 2025-09-03) | data sources 기반 최신 API |
+| 백엔드 | **FastAPI** + SSE, `uv`, Python 3.12 | 진행 단계 스트리밍, 단일 프로세스로 모델을 한 번만 로딩 |
+| 프런트엔드 | **React 19** + Vite + TypeScript, lucide 아이콘, Pretendard | 컴포넌트 레지스트리로 블록을 렌더링. 디자인 시안은 v0로 만들고 직접 이식 |
+| 관측 | **Arize Phoenix** + OpenTelemetry (OpenInference) | LangGraph 노드, `claude -p`, 검색, 재정렬, 도구까지 한 트레이스로 |
+| 평가 | 자체 하네스 (Recall@k, MRR, LLM 채점, 거절 정확도) | 변경 전후를 같은 기준으로 비교 |
+| 하드웨어 | RTX 5080 16GB (CUDA 12.8 wheels) | 전체 색인 시 VRAM 최대 9.6GB |
+
+---
+
+## 프로젝트 구조
 
 ```
-Notion ──sync──► chunk + context prefix ──► Qwen3-Embedding-4B (dense) + bge-m3 (sparse) ──► Qdrant
-query ─► rewrite ─► hybrid top-50 ─► bge-reranker ─► top-5 ─► LangGraph agents ─► grounded answer + citations
-                                                    └─ tool registry / executor (writes need approval)
+src/notion_agent/
+├── ingest/        노션 수집 (reader, 증분 sync, SQLite 상태)
+├── rag/           청킹 · 임베딩 · Qdrant · 재정렬 · retriever
+├── qa/            근거 기반 답변(grounded), 블록 검증, 관련 이미지, 직렬화
+├── agent/         LangGraph 그래프(planner/tools/approval/writer), factory
+├── tools/         ToolRegistry + 내장 도구(검색·페이지·타임라인·쓰기·기억)
+├── memory/        장기 기억(profile)
+├── llm/           LLMClient, claude -p 어댑터
+├── observability/ Phoenix/OTel tracing
+├── api/           FastAPI(SSE, 페이지 뷰어, 이미지 프록시, 에이전트 재개)
+├── mcp_server.py  읽기 전용 my-memory MCP
+└── cli.py         nra sync | ask | agent | serve | mcp | doctor
+web/               React UI (사이드바 · 문서형 답변 · 출처 패널)
+eval/              평가 데이터 생성 · 실행 · 청크 통계 · 결과(results.md)
+docs/              직무 분석 → 요구사항 → 스택 → 설계 문서 (01~09)
+tests/             64개 (가짜 LLM·임베딩으로 GPU 없이 실행)
 ```
 
-- **App** runs in a local `uv` venv. **Infra** (Qdrant, Phoenix tracing) runs in Docker, bound to `127.0.0.1`.
-- **LLM** goes through `LLMClient`: `claude_cli` (Claude subscription via `claude -p`, personal use only)
-  or `anthropic_api`. Built-in tools are disabled on every call; tools are executed by our own code.
+---
 
-## Quickstart
+## 실행하기
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh   # once
-uv sync                       # core
-uv sync --extra rag --extra ingest   # embeddings, Qdrant, Notion
-cp .env.example .env          # fill NOTION_TOKEN
-docker compose up -d          # optional: Qdrant server + Phoenix
-uv run nra doctor
-uv run nra ask "hello"
+# 0) 준비: uv, NVIDIA GPU(CUDA 12.8+), Claude Code 로그인(claude -p 사용)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv sync --extra ingest --extra rag --extra api --extra trace
+cp .env.example .env            # NOTION_TOKEN 입력 (노션 integration에 페이지 접근 권한 부여)
+
+# 1) 노션 동기화 (처음엔 전체, 이후엔 변경분만)
+uv run nra sync --full
+
+# 2) 웹 UI
+(cd web && npm install && npm run build)
+uv run nra serve                # http://127.0.0.1:8000
+
+# 그 밖에
+uv run nra ask "OOM 났을 때 batch 몇으로 줄였지?"     # 터미널에서 질문
+uv run nra agent "최근 Docker 관련 노트 요약해줘"      # 에이전트 모드
+claude mcp add my-memory -- uv --directory $PWD run nra mcp   # MCP 등록
+docker compose up -d phoenix && NRA_TRACE=1 uv run nra serve   # 트레이싱 http://127.0.0.1:6006
+uv run python -m eval.build_dataset && uv run python -m eval.run_eval --tag mytest   # 평가
+uv run pytest
 ```
 
-## Roadmap
-
-| Step | Scope |
+| 단축키 | 동작 |
 |---|---|
-| F0 | Skeleton, `LLMClient` (claude CLI) ✅ |
-| F1 | Notion ingestion + incremental sync |
-| F2 | Chunking, hybrid embeddings, Qdrant, reranking, grounded Q&A |
-| F3 | `my-memory` MCP server |
-| F4 | Tool registry/executor, LangGraph multi-agent, write approval |
-| F5 | Memory (checkpointer + long-term profile) |
-| F6 | Evaluation (retrieval, faithfulness, tool selection) + tracing |
-| F7 | FastAPI + NotebookLM-style web UI |
+| `Ctrl K` | 새 질문 |
+| `Ctrl /` | 에이전트 모드 |
+| `Esc` | 생성 중단 / 패널 닫기 |
+| `[` `]` | 이전/다음 출처 |
+| `Shift` + 출처 클릭 | 노션 창에서 바로 열기 |
+| 값 더블클릭 | 복사 |
+
+---
+
+## 한계와 다음 단계
+
+- **이미지는 검색 대상이 아닙니다.** 텍스트로 찾은 근거 근처의 이미지만 보여줍니다. 이미지 내용까지 색인하려면 비전 모델로 설명을 만들고 재색인해야 합니다.
+- **응답 시간:** 블록이 많은 답은 9~25초가 걸립니다. 결론 블록부터 먼저 보여주는 스트리밍을 검토 중입니다.
+- **청크 품질:** 본문 없이 속성만 있는 데이터베이스 행(22%)과, 코드 펜스가 잘린 것으로 나오는 청크(12%)의 원인 분석이 남아 있습니다.
+- **2차 단계:** 팀원 접근(인증, 권한), GitHub 레포 연동, 로컬 LLM 라우터, 격리 환경에서 실행하는 계산·시각화 도구를 계획하고 있습니다.
+
+## 설계 문서
+
+이 프로젝트는 AI Agent 채용 공고 분석에서 출발했습니다. 공고에서 요구하는 역량을 기능에 하나씩 대응시키며 설계했습니다.
+
+| 문서 | 내용 |
+|---|---|
+| [01 직무 분석](docs/01_AI_Agent_직무분석.md) · [03 요구사항 매핑](docs/03_요구사항_매핑_및_기능정의.md) | 채용 공고 요구 역량 → 기능(F0~F7) 대응 |
+| [04 기술 스택](docs/04_기술스택_및_구조.md) · [05 재검토](docs/05_스택_재검토.md) · [06 2026 SOTA 조사](docs/06_2026_SOTA_조사.md) | 모델·DB 선정 근거 |
+| [07 Tool Calling 설계](docs/07_Tool_Calling_및_로컬_라우터_설계.md) | 직접 구현한 도구 호출과 승인 게이트 |
+| [08 답변 신뢰도 설계](docs/08_UI_및_답변신뢰도_설계.md) · [09 UX 화면 설계](docs/09_UX_화면설계.md) | 근거 검증 원리, 사용 시나리오, 화면 구성 |
+
+---
+
+<sub>개인 사용 목적의 프로젝트입니다. `claude -p`(Claude 구독)는 개인 사용에만 씁니다. 서버는 `127.0.0.1`에만 열립니다.</sub>
