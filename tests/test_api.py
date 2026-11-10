@@ -172,3 +172,17 @@ def test_ask_stream_emits_stages_then_answer(env):
     assert events == ["retrieving", "retrieved", "generating", "verifying", "answer"]
     last = json.loads(body.strip().split("data: ")[-1])
     assert last["answerable"] and last["sentences"][0]["type"] == "text"
+
+
+def test_ask_uses_user_memo_as_source(env):
+    c, _, _ = env
+    note = {"id": "n1", "title": "pasta", "text": "pasta carbonara recipe guanciale"}
+    q = {"question": "pasta carbonara recipe"}
+    assert not c.post("/api/ask", json=q).json()["answerable"]  # not in Notion
+    a = c.post("/api/ask", json={**q, "notes": [note]}).json()
+    assert a["answerable"] and a["sources"][0]["page_id"] == "note:n1"
+    assert a["sources"][0]["title"] == "메모: pasta"
+    # an unrelated memo is not attached
+    other = {"id": "n2", "text": "bicycle tyre pressure"}
+    a2 = c.post("/api/ask", json={"question": "kubectl rollout restart", "notes": [other]}).json()
+    assert all(not s["page_id"].startswith("note:") for s in a2["sources"])

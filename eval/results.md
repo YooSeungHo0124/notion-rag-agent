@@ -82,3 +82,19 @@ fused = hybrid RRF only, plain = after rerank.
 - abstain_accuracy_unanswerable: 1.00
 - mean_supported_ratio: 0.85
 - mean_latency_s: 5.98
+
+## 20261110_231305 · v4-genui2 · n=46
+
+| level | R@1 | R@5 | R@10 | MRR |
+|---|---|---|---|---|
+| fused_chunk | 0.65 | 0.95 | 0.97 | 0.78 |
+| fused_page | 0.90 | 1.00 | 1.00 | 0.95 |
+| chunk | 0.78 | 0.97 | 1.00 | 0.86 |
+| page | 1.00 | 1.00 | 1.00 | 1.00 |
+
+- answer_accuracy: 0.95
+- answer_correct_or_partial: 0.97
+- false_abstain_rate: 0.03
+- abstain_accuracy_unanswerable: 1.00
+- mean_supported_ratio: 0.86
+- mean_latency_s: 7.81

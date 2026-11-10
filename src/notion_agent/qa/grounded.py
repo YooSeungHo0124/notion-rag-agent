@@ -233,13 +233,33 @@ class GroundedQA:
     def answer(
         self, question: str, filters: SearchFilters | None = None,
         on_event: Callable[[str, dict], None] | None = None,
+        extra: list[Hit] | None = None,
     ) -> Answer:
         emit = on_event or (lambda *_: None)
         emit("retrieving", {})
         hits = self.retriever.retrieve(question, filters=filters)
+        if extra:
+            hits = self.merge_extra(question, hits, extra)
         emit("retrieved", {"n": len(hits), "top": round(hits[0].rerank_score, 3) if hits else 0,
                            "titles": list(dict.fromkeys(h.page_title for h in hits))[:5]})
         return self.answer_from_hits(question, hits, on_event=emit)
+
+    def merge_extra(self, question: str, hits: list[Hit], extra: list[Hit]) -> list[Hit]:
+        """User memos as extra sources: scored by the same reranker, kept only if they pass
+        the answerability threshold, then merged by score (they never displace more than
+        two Notion hits)."""
+        cfg = self.retriever.cfg
+        scores = self.verifier.score(question, [e.text for e in extra])
+        keep = sorted(
+            (e.model_copy(update={"rerank_score": float(sc)})
+             for e, sc in zip(extra, scores, strict=True) if sc >= cfg.min_rerank_score),
+            key=lambda e: e.rerank_score, reverse=True)[:2]
+        if not keep:
+            return hits
+        merged = sorted([*hits, *keep], key=lambda h: h.rerank_score, reverse=True)
+        merged = merged[: max(len(hits), cfg.final_k) + len(keep)]
+        ok = merged[0].rerank_score >= cfg.min_rerank_score
+        return [h.model_copy(update={"answerable": ok}) for h in merged]
 
     def answer_from_hits(
         self, question: str, hits: list[Hit], on_event: Callable[[str, dict], None] | None = None
@@ -276,7 +296,8 @@ class GroundedQA:
         return a
 
     def _verify(
-        self, question: str, raw: list[dict], hits: list[Hit], top: float, latency_ms: int
+        self, question: str, raw: list[dict], hits: list[Hit], top: float, latency_ms: int,
+        src_text: Callable[[Hit], str] = lambda h: h.text,
     ) -> Answer:
         valid_ids = {f"S{i}": i for i in range(1, len(hits) + 1)}
         dropped = 0
@@ -302,11 +323,11 @@ class GroundedQA:
                 sentences.append(Sentence(text, [], "supported", 1.0, btype, bdata))
                 continue
             if ids:
-                score = max(self.verifier.score(text[:2000], [hits[i - 1].text for i in ids]))
+                score = max(self.verifier.score(text[:2000], [src_text(hits[i - 1]) for i in ids]))
             note = ""
             if btype in ("table", "chart", "code") and ids:
                 # numbers / code must literally come from the cited sources
-                src = " ".join(hits[i - 1].text for i in ids)
+                src = " ".join(src_text(hits[i - 1]) for i in ids)
                 if btype == "code":
                     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
                     ok = sum(ln in src for ln in lines) / max(len(lines), 1)
@@ -319,7 +340,7 @@ class GroundedQA:
                         for j, h in enumerate(hits, 1):
                             if j in ids:
                                 continue
-                            hn = {_num_key(n) for n in _NUM.findall(h.text)}
+                            hn = {_num_key(n) for n in _NUM.findall(src_text(h))}
                             if any(_num_in(n, hn) for n in missing):
                                 ids.append(j)
                                 srcnums |= hn

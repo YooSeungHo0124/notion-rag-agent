@@ -60,3 +60,18 @@ def test_non_json_output_raises(client, monkeypatch):
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: _proc("boom", code=1))
     with pytest.raises(LLMError):
         client.complete("x")
+
+
+def test_long_prompt_goes_via_stdin(client, monkeypatch):
+    seen = {}
+
+    def run(cmd, **kw):
+        seen["cmd"], seen["input"] = cmd, kw.get("input")
+        return _proc('{"subtype":"success","result":"ok"}')
+
+    monkeypatch.setattr(subprocess, "run", run)
+    long = "가" * 50_000  # 150 KB in UTF-8 > argv limit
+    client.complete(long)
+    assert long not in seen["cmd"] and seen["input"] == long
+    client.complete("short")
+    assert "short" in seen["cmd"] and seen["input"] is None

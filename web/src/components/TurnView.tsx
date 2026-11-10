@@ -5,6 +5,7 @@ import {
 import { useEffect, useState } from "react";
 import type { AgentRun, Answer, Turn } from "../types";
 import AnswerBody from "./Answer";
+import { MindMap } from "./Studio";
 
 const CONF = {
   high: { dot: "c-high", txt: "근거 충분" },
@@ -48,6 +49,38 @@ function Progress({ t }: { t: Turn }) {
       {i < cur ? done : run}
     </div>
   );
+  if (t.mode === "studio") {
+    const sorder = ["collecting", "generating", "verifying"];
+    const sc = st === "collected" ? 1 : Math.max(0, sorder.indexOf(st));
+    const c = t.retrieved;
+    const srow = (i: number, run: ReactLabel, done: ReactLabel) => (
+      <div className={`step ${i < sc ? "done" : i === sc ? "run" : ""}`}>
+        <span className="ic">{i < sc ? <Check /> : <span className="ring" />}</span>
+        {i < sc ? done : run}
+      </div>
+    );
+    return (
+      <div className="steps" aria-live="polite">
+        {srow(
+          0,
+          <span>범위의 노트 모으는 중…</span>,
+          <span>
+            노트 모으기 · {c?.pages_used ?? 0}페이지 {c?.chunks ?? 0}개 조각
+            {c?.truncated ? ` (전체 ${c.pages_total}페이지 중 최근 수정 순)` : ""}
+          </span>,
+        )}
+        {srow(
+          1,
+          <>
+            <span>{t.studio?.title ?? "문서"} 작성 중 · 긴 문서는 1~2분 걸립니다</span>
+            <Elapsed since={t.startedAt} />
+          </>,
+          <span>{t.studio?.title ?? "문서"} 작성</span>,
+        )}
+        {t.studio?.kind !== "mindmap" && srow(2, <span>{sc === 2 ? "근거 검증 중…" : "근거 검증"}</span>, <span>근거 검증</span>)}
+      </div>
+    );
+  }
   if (t.mode === "agent")
     return (
       <div className="steps" aria-live="polite">
@@ -309,6 +342,20 @@ function ActionResult({ run, act }: { run: AgentRun; act: TurnActions }) {
   );
 }
 
+function StudioLine({ t }: { t: Turn }) {
+  const cv = t.studio?.coverage;
+  return (
+    <div className="summary-line fade">
+      <Check />
+      {t.doneMs !== undefined ? `${(t.doneMs / 1000).toFixed(0)}초 · ` : ""}
+      {cv ? `${cv.pages_used}페이지 ${cv.chunks_used}개 조각을 읽음` : ""}
+      {cv?.truncated ? ` (전체 ${cv.pages_total}페이지 중 최근 수정 순)` : ""}
+      {t.studio?.topic ? ` · 주제: ${t.studio.topic}` : ""}
+      {t.studio?.kind !== "mindmap" ? " · 근거 검증 완료" : ""}
+    </div>
+  );
+}
+
 export default function TurnView({ t, act, generating }: { t: Turn; act: TurnActions; generating: boolean }) {
   const a = t.answer;
   return (
@@ -328,10 +375,42 @@ export default function TurnView({ t, act, generating }: { t: Turn; act: TurnAct
       {generating && !a && !t.error && !t.stopped && t.run?.status !== "awaiting_approval" && <Progress t={t} />}
       {t.run?.status === "awaiting_approval" && <Approval t={t} run={t.run} act={act} />}
       {t.run?.status === "done" && t.run.answer?.kind === "action" && <ActionResult run={t.run} act={act} />}
-      {a && !a.answerable && <Refusal t={t} a={a} act={act} />}
-      {a && a.answerable && (
+      {a && !a.answerable && t.mode !== "studio" && <Refusal t={t} a={a} act={act} />}
+      {a && !a.answerable && t.mode === "studio" && (
+        <div className="refuse fade" role="status">
+          <div className="head">
+            <Info />이 범위에서 문서를 만들 만한 내용을 찾지 못했습니다
+          </div>
+          <p>범위를 넓히거나 주제를 바꿔 다시 시도해 보세요.</p>
+        </div>
+      )}
+      {a && t.mindmap && (
         <>
-          {t.doneMs !== undefined && (
+          <StudioLine t={t} />
+          <MindMap root={t.mindmap} onAsk={act.followup} />
+          <div className="trust fade">
+            <span className="pill" style={{ cursor: "default" }}>
+              <span className="c-dot c-med" aria-hidden="true" />
+              구조 요약 · 문장 검증 대상 아님 · 출처 {a.sources.length}
+            </span>
+            {a.sources.length > 0 && (
+              <button className="act" onClick={() => act.openSource(t.id, 1)}>
+                <PanelRightOpen />
+                출처 보기
+              </button>
+            )}
+            <span className="sp" />
+            <button className="act" aria-pressed={act.isSaved(t)} onClick={() => act.toggleSave(t)}>
+              <Star />
+              저장
+            </button>
+          </div>
+        </>
+      )}
+      {a && a.answerable && !t.mindmap && (
+        <>
+          {t.mode === "studio" && <StudioLine t={t} />}
+          {t.doneMs !== undefined && t.mode !== "studio" && (
             <div className="summary-line fade">
               <Check />
               {t.mode === "agent" && t.run ? `에이전트 ${t.run.steps.length}단계 · ` : ""}

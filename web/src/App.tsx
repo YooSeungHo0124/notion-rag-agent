@@ -1,16 +1,20 @@
-import { ArrowUp, Check, Folder, FolderSearch, Info, Menu, PanelRight, PenLine, Search, Square, X } from "lucide-react";
+import { ArrowUp, Check, Folder, FolderSearch, Info, Menu, PanelRight, NotebookPen, PenLine, Search, Sparkles, Square, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import { answerText } from "./components/Answer";
 import { ScopePopover, Sidebar } from "./components/Sidebar";
 import SourcePanel from "./components/SourcePanel";
 import TurnView, { type TurnActions } from "./components/TurnView";
-import type { AgentRun, Answer, Conv, Health, PageSource, SourceHit, SyncStatus, Turn } from "./types";
+import { STUDIO_KINDS, STUDIO_TITLE, StudioMenu } from "./components/Studio";
+import NotesView from "./components/NotesView";
+import type { AgentRun, Answer, Conv, Health, Note, PageSource, SourceHit, StudioKind, SyncStatus, Turn } from "./types";
 import { loadJSON, saveJSON, uid } from "./util";
 
 const K_CONVS = "nra.convs.v2";
 const K_SAVED = "nra.saved.v2";
 const K_NOTICE = "nra.notice.dismissed";
+const K_NOTES = "nra.notes.v1";
+const K_USE_NOTES = "nra.notes.use";
 const NOTION_WIN = "nra-notion";
 const EXAMPLES: [string, string][] = [
   ["TECH_SEE v3 backend 포트가 몇이었지?", "기억 찾기"],
@@ -31,6 +35,10 @@ export default function App() {
   const [agent, setAgent] = useState(false);
   const [scope, setScope] = useState<Scope>(null);
   const [scopeAnchor, setScopeAnchor] = useState<HTMLElement | null>(null);
+  const [notes, setNotes] = useState<Note[]>(() => loadJSON<Note[]>(K_NOTES, []));
+  const [useNotes, setUseNotes] = useState(() => loadJSON<boolean>(K_USE_NOTES, true));
+  const [view, setView] = useState<"chat" | "notes">("chat");
+  const [studioAnchor, setStudioAnchor] = useState<HTMLElement | null>(null);
   const [panel, setPanel] = useState<{ turnId: string; idx: number; closest?: boolean } | null>(null);
   const [drawer, setDrawer] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">(
@@ -60,6 +68,8 @@ export default function App() {
 
   useEffect(() => saveJSON(K_CONVS, convs.slice(-100)), [convs]);
   useEffect(() => saveJSON(K_SAVED, saved), [saved]);
+  useEffect(() => saveJSON(K_NOTES, notes), [notes]);
+  useEffect(() => saveJSON(K_USE_NOTES, useNotes), [useNotes]);
 
   /* ---------- health / sources / sync ---------- */
   const refreshHealth = useCallback(async () => {
@@ -161,6 +171,7 @@ export default function App() {
       setConvs((cs) => cs.map((c) => (c.id === id ? { ...c, updatedAt: Date.now(), turns: [...c.turns, turn] } : c)));
     }
     setPanel(null);
+    setView("chat");
     setBusy(turn.id);
     setDrawer(false);
     requestAnimationFrame(() =>
@@ -174,9 +185,74 @@ export default function App() {
       if (mode === "agent") {
         applyRun(id, turn.id, await api.agent(q, id), t0);
       } else {
-        const a = await api.askStream(q, sc?.page_ids ?? [], (stage) => patchTurn(id, turn.id, stage.name === "retrieved" ? { stage, retrieved: stage } : { stage }), ctl.signal);
+        const a = await api.askStream(q, sc?.page_ids ?? [], (stage) => patchTurn(id, turn.id, stage.name === "retrieved" ? { stage, retrieved: stage } : { stage }), ctl.signal, useNotes && !sc ? notes : []);
         patchTurn(id, turn.id, { answer: a, doneMs: Date.now() - t0 });
         loadImages(id, turn.id, a);
+      }
+    } catch (e) {
+      if ((e as Error).name === "AbortError") patchTurn(id, turn.id, { stopped: true });
+      else patchTurn(id, turn.id, { error: (e as Error).message });
+    } finally {
+      setBusy(null);
+      abortRef.current = null;
+    }
+  };
+
+  /* ---------- studio: documents over a whole scope ---------- */
+  const runStudio = async (kind: StudioKind, topic = "", sc: Scope = scope, inCur = false) => {
+    if (busy || !ready) return;
+    topic = topic.trim();
+    const title = STUDIO_TITLE[kind];
+    const scopeLabel = sc?.label ?? "전체 노트";
+    const q = `${title} · ${scopeLabel}${topic ? ` · ${topic}` : ""}`;
+    const turn: Turn = {
+      id: uid(),
+      q,
+      mode: "studio",
+      startedAt: Date.now(),
+      studio: { kind, title, scopeLabel, topic, page_ids: sc?.page_ids ?? [] },
+    };
+    let cid = inCur ? cur : null;
+    if (!cid) {
+      cid = uid();
+      const c: Conv = { id: cid, title: q.slice(0, 60), updatedAt: Date.now(), turns: [turn], scope: sc };
+      setConvs((cs) => [...cs, c]);
+      setCur(cid);
+    } else {
+      const id0 = cid;
+      setConvs((cs) => cs.map((c) => (c.id === id0 ? { ...c, updatedAt: Date.now(), turns: [...c.turns, turn] } : c)));
+    }
+    setPanel(null);
+    setView("chat");
+    setBusy(turn.id);
+    setDrawer(false);
+    setStudioAnchor(null);
+    requestAnimationFrame(() =>
+      scrollRef.current?.querySelector(`[data-turn="${turn.id}"]`)?.scrollIntoView({ block: "start", behavior: "smooth" }),
+    );
+    const t0 = Date.now();
+    const ctl = new AbortController();
+    abortRef.current = ctl;
+    const id = cid;
+    try {
+      const r = await api.studio(
+        kind,
+        sc?.page_ids ?? [],
+        topic,
+        (stage) => patchTurn(id, turn.id, stage.name === "collected" ? { stage, retrieved: stage } : { stage }),
+        ctl.signal,
+      );
+      const studio = { ...turn.studio!, coverage: r.coverage };
+      if (r.kind === "mindmap") {
+        const ok = !!r.tree && r.tree.children.length > 0;
+        const answer: Answer = {
+          question: q, answerable: ok, sentences: [], sources: r.sources ?? [], confidence: "none",
+          retrieval_score: 0, supported_ratio: 0, dropped_citations: 0, latency_ms: r.latency_ms,
+        };
+        patchTurn(id, turn.id, { studio, answer, mindmap: ok ? r.tree : undefined, doneMs: Date.now() - t0 });
+      } else if (r.answer) {
+        patchTurn(id, turn.id, { studio, answer: r.answer, doneMs: Date.now() - t0 });
+        loadImages(id, turn.id, r.answer);
       }
     } catch (e) {
       if ((e as Error).name === "AbortError") patchTurn(id, turn.id, { stopped: true });
@@ -191,6 +267,7 @@ export default function App() {
 
   const newConv = () => {
     stop();
+    setView("chat");
     setCur(null);
     setPanel(null);
     setDrawer(false);
@@ -298,7 +375,10 @@ export default function App() {
         setBusy(null);
       }
     },
-    retry: (t) => ask(t.q, { agentMode: t.mode === "agent" }),
+    retry: (t) =>
+      t.studio
+        ? runStudio(t.studio.kind, t.studio.topic, t.studio.page_ids.length ? { label: t.studio.scopeLabel, page_ids: t.studio.page_ids } : null, true)
+        : ask(t.q, { agentMode: t.mode === "agent" }),
     openNotion,
   };
 
@@ -462,16 +542,17 @@ export default function App() {
         current={cur}
         onSelect={(id) => {
           setCur(id);
+          setView("chat");
           setPanel(null);
           setDrawer(false);
         }}
         onNew={newConv}
         onDelete={deleteConv}
-        savedCount={saved.length}
+        savedCount={saved.length + notes.length}
         onSaved={() => {
-          if (!savedTurns.length) return toast("저장한 답변이 없습니다");
-          setCur(savedTurns[savedTurns.length - 1].c.id);
-          toast(`저장한 답변 ${savedTurns.length}개 · 가장 최근 대화로 이동`);
+          setView("notes");
+          setPanel(null);
+          setDrawer(false);
         }}
         scopeLabel={scope?.label ?? "전체"}
         onScope={(el) => setScopeAnchor(el)}
@@ -504,7 +585,25 @@ export default function App() {
         </div>
 
         <div className="scroll" ref={scrollRef} onClick={onThreadClick} onMouseOver={onThreadOver} onDoubleClick={onDbl}>
-          {!conv ? (
+          {view === "notes" ? (
+            <NotesView
+              notes={notes}
+              setNotes={setNotes}
+              useNotes={useNotes}
+              setUseNotes={setUseNotes}
+              saved={savedTurns}
+              onOpen={(cid, tid) => {
+                setCur(cid);
+                setView("chat");
+                setTimeout(
+                  () => scrollRef.current?.querySelector(`[data-turn="${tid}"]`)?.scrollIntoView({ block: "start" }),
+                  50,
+                );
+              }}
+              onUnsave={(t) => setSaved((s) => s.filter((x) => x !== t.id))}
+              onBack={() => setView("chat")}
+            />
+          ) : !conv ? (
             <div className="empty">
               <h2>무엇을 찾고 있나요?</h2>
               <p>
@@ -519,6 +618,20 @@ export default function App() {
                     <small>{t}</small>
                   </button>
                 ))}
+              </div>
+              <div className="studio-cards">
+                <h3>
+                  <Sparkles /> 스튜디오 <small>범위: {scope?.label ?? "전체 노트"} · 노트를 통째로 읽고 문서를 만듭니다</small>
+                </h3>
+                <div className="grid">
+                  {STUDIO_KINDS.map((k) => (
+                    <button key={k.kind} disabled={!ready} onClick={() => runStudio(k.kind)}>
+                      {k.icon}
+                      <b>{k.title}</b>
+                      <small>{k.desc}</small>
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           ) : (
@@ -565,6 +678,21 @@ export default function App() {
                   범위: 전체 노트
                 </button>
               )}
+              {useNotes && !scope && notes.some((n) => n.text.trim()) && (
+                <button className="chip studio-chip" title="관련 있는 메모를 출처로 함께 씁니다 (노트 화면에서 끄기)" onClick={() => setView("notes")}>
+                  <NotebookPen />
+                  메모 {notes.filter((n) => n.text.trim()).length}개 포함
+                </button>
+              )}
+              <button
+                className="chip studio-chip"
+                disabled={!ready || !!busy}
+                title="스튜디오: 이 범위로 브리핑·학습 가이드·FAQ·타임라인·마인드맵 만들기"
+                onClick={(e) => setStudioAnchor(e.currentTarget)}
+              >
+                <Sparkles />
+                스튜디오
+              </button>
             </div>
             <form
               className="composer"
@@ -646,6 +774,8 @@ export default function App() {
             onIdx={(n) => setPanel({ ...panel, idx: n })}
             onClose={() => setPanel(null)}
             openNotion={openNotion}
+            onGuide={(h) => runStudio("guide", "", { label: h.title, page_ids: [h.page_id] }, !!conv)}
+            busy={!!busy}
           />
         )}
       </aside>
@@ -668,6 +798,17 @@ export default function App() {
         <Check />
         {toastMsg}
       </div>
+      {studioAnchor && (
+        <>
+          <div style={{ position: "fixed", inset: 0, zIndex: 39 }} onClick={() => setStudioAnchor(null)} />
+          <StudioMenu
+            anchor={studioAnchor}
+            scopeLabel={scope?.label ?? "전체 노트"}
+            scopePages={scope ? new Set(scope.page_ids).size : sources.length}
+            onPick={(kind, topic) => runStudio(kind, topic, scope, !!conv)}
+          />
+        </>
+      )}
       {scopeAnchor && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 39 }} onClick={() => setScopeAnchor(null)} />
