@@ -1,0 +1,16 @@
+[
+ {"id": "e1", "q": "Azure Interior 영업기회들의 예상매출 합계는 얼마야?", "must": [["20600", "20,600"]], "src": ["erp"]},
+ {"id": "e2", "q": "지금 고객 미수금 총액은?", "must": [["124500", "124,500"]], "src": ["erp"]},
+ {"id": "e3", "q": "Acme Corporation 송장 중 만기가 이미 지난 건 뭐야?", "must": [["INV/2026/00004"]], "src": ["erp"]},
+ {"id": "e4", "q": "할인을 15% 넘게 주려면 누구 승인이 필요해?", "must": [["대표이사"]], "src": ["doc"]},
+ {"id": "e5", "q": "대리점 주문은 확정 후 며칠 안에 출고해야 해?", "must": [["10영업일", "10 영업일"]], "src": ["doc"]},
+ {"id": "e6", "q": "Acme Corporation 신규 주문을 지금 바로 확정해도 돼?", "must": [["재무팀"], ["INV/2026/0000", "연체", "만기"]], "src": ["erp", "doc"]},
+ {"id": "e7", "q": "Azure Interior Customizable Desk 12% 할인 줄 수 있어?", "must": [["조건부"], ["10%"]], "src": ["doc"]},
+ {"id": "e8", "q": "의자 중에 안전재고보다 적은 품목 알려줘", "must": [["Office Chair Black"], ["20"]], "src": ["erp", "doc"]},
+ {"id": "e9", "q": "Gemini Furniture 확정 주문들 출고 상황이랑 계약상 출고 기한 정리해줘", "must": [["10영업일", "10 영업일"], ["S000"]], "src": ["erp", "doc"]},
+ {"id": "e10", "q": "Ready Mat은 우리 고객이야 공급처야?", "must": [["공급"], ["고객", "DeltaPC"]], "src": []},
+ {"id": "e11", "q": "Customizable Desk 무상 설치 조건이 뭐야?", "must": [["10대"]], "src": ["doc"]},
+ {"id": "e12", "q": "Wood Corner에 넣은 구매주문 상태는?", "must": [["P00001"]], "src": ["erp"]},
+ {"id": "u1", "q": "작년에 Acme Corporation과 했던 소송 결과는 어떻게 됐어?", "abstain": true},
+ {"id": "u2", "q": "OpenWood와 맺은 대리점 계약의 할인율은?", "abstain": true}
+]

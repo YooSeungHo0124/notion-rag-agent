@@ -72,3 +72,4 @@ pythonpath = ["src"]
 "eval/*" = ["E501"]  # long Korean prompt/report strings
 "src/notion_agent/agent/graph.py" = ["E501"]  # planner prompt
 "src/notion_agent/qa/grounded.py" = ["E501"]  # answer prompt
+"src/notion_agent/erp/tools.py" = ["E501"]  # Korean row formats

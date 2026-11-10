@@ -53,6 +53,12 @@ class Settings(BaseSettings):
 
     notion_token: str = ""
     notion_root_ids: str = ""
+    # Demo ERP/CRM (Odoo). Empty url -> ERP tools disabled.
+    odoo_url: str = ""
+    odoo_db: str = ""
+    odoo_user: str = ""
+    odoo_password: str = ""
+    company_docs_dir: str = "scenario/docs"
 
     llm_provider: Literal["claude_cli", "anthropic_api"] = "claude_cli"
     llm_model: str = "sonnet"

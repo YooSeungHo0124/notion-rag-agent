@@ -316,6 +316,13 @@ const TOOL_LABEL: Record<string, string> = {
   append_to_page: "페이지 끝에 추가",
   create_page: "새 하위 페이지 생성",
   remember: "기억하기",
+  erp_find_partner: "ERP 거래처 조회",
+  erp_pipeline: "CRM 영업기회 조회",
+  erp_sales: "판매주문 조회",
+  erp_stock: "재고 조회",
+  erp_invoices: "송장·미수금 조회",
+  erp_purchases: "구매주문 조회",
+  erp_log_activity: "CRM 활동 등록",
 };
 
 function Trace({ run }: { run: AgentRun }) {
@@ -355,19 +362,22 @@ function Approval({
   act: TurnActions;
 }) {
   const ap = run.approval!;
-  const orig = String(ap.args.text ?? "");
+  const erp = ap.tool.startsWith("erp_");
+  const field = erp ? "note" : "text";
+  const orig = String(ap.args[field] ?? "");
   const [text, setText] = useState(orig);
   const edited = text !== orig;
-  const target =
-    ap.tool === "create_page"
+  const target = erp
+    ? `영업기회 #${String(ap.args.lead_id ?? "")} · “${String(ap.args.summary ?? "")}”${ap.args.due ? ` · 마감 ${String(ap.args.due)}` : ""}`
+    : ap.tool === "create_page"
       ? `새 페이지 “${String(ap.args.title ?? "")}”`
       : `페이지 ${String(ap.args.page_id ?? "").slice(0, 8)}…`;
   return (
     <>
-      <div className="approve fade" role="group" aria-label="노션 기록 승인">
+      <div className="approve fade" role="group" aria-label={erp ? "ERP 기록 승인" : "노션 기록 승인"}>
         <div className="hd">
           <ShieldCheck />
-          노션에 기록하기 전에 확인해 주세요
+          {erp ? "ERP(CRM)에 기록하기 전에 확인해 주세요" : "노션에 기록하기 전에 확인해 주세요"}
         </div>
         <dl>
           <dt>대상</dt>
@@ -400,7 +410,7 @@ function Approval({
           <button
             className="btn primary"
             onClick={() =>
-              act.decide(t.id, true, edited ? { ...ap.args, text } : undefined)
+              act.decide(t.id, true, edited ? { ...ap.args, [field]: text } : undefined)
             }
           >
             {edited ? "수정 후 실행" : "실행"}
@@ -426,7 +436,13 @@ function ActionResult({ run, act }: { run: AgentRun; act: TurnActions }) {
               {s.ok ? "완료" : "실행하지 않음"} · {TOOL_LABEL[s.tool] ?? s.tool}
               {!s.ok && ` — ${String(s.observation)}`}
             </span>
-            {s.ok && obs.url && (
+            {s.ok && obs.url && s.tool.startsWith("erp_") && (
+              <a href={obs.url} target="_blank" rel="noreferrer">
+                Odoo에서 보기
+                <ArrowUpRight />
+              </a>
+            )}
+            {s.ok && obs.url && !s.tool.startsWith("erp_") && (
               <a
                 href="#"
                 onClick={(e) => (

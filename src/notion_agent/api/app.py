@@ -300,6 +300,8 @@ def create_app(
         svc = st.require()
         if svc.pages is None:
             raise HTTPException(501, "page viewer not configured")
+        if page_id.startswith("doc:"):  # local company docs: index is the original
+            live = False
         if live:
             p = svc.pages.get(page_id, refresh=refresh, live=True)
             if p is None:
