@@ -10,12 +10,14 @@ embedders instead of spawning ``nra sync``. A single lock serialises ask and syn
 
 from __future__ import annotations
 
+import json
 import logging
+import queue
 import sqlite3
 import threading
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -24,7 +26,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -249,6 +251,49 @@ def create_app(
     @app.post("/api/ask")
     async def ask(req: AskRequest) -> dict[str, Any]:
         return await run_in_threadpool(_ask, req)
+
+    @app.post("/api/ask/stream")
+    def ask_stream(req: AskRequest) -> StreamingResponse:
+        """Server-sent events: stage updates (retrieving/retrieved/generating/verifying),
+        then `answer` (or `error`). Lets the UI show progress during the ~7 s pipeline."""
+        q: queue.Queue[tuple[str, Any] | None] = queue.Queue()
+
+        def work() -> None:
+            try:
+                svc = st.require()
+                filters = None
+                if req.page_ids or req.tags:
+                    filters = SearchFilters(page_ids=req.page_ids or None, tags=req.tags or None)
+                if st.sync.running:
+                    raise HTTPException(409, "동기화 중입니다. 끝난 뒤 다시 질문하세요")
+                if not st.lock.acquire(timeout=ASK_LOCK_TIMEOUT_S):
+                    raise HTTPException(503, "서버가 바쁩니다")
+                try:
+                    t0 = time.perf_counter()
+                    ans = svc.qa.answer(req.question.strip(), filters=filters,
+                                        on_event=lambda e, d: q.put((e, d)))
+                    out = answer_to_json(ans)
+                    out["total_ms"] = int((time.perf_counter() - t0) * 1000)
+                    q.put(("answer", out))
+                finally:
+                    st.lock.release()
+            except HTTPException as e:
+                q.put(("error", {"detail": e.detail}))
+            except Exception as e:  # noqa: BLE001 - reported to the client
+                log.exception("ask stream failed")
+                q.put(("error", {"detail": f"{type(e).__name__}: {e}"}))
+            finally:
+                q.put(None)
+
+        threading.Thread(target=work, daemon=True).start()
+
+        def events() -> Iterator[str]:
+            while (item := q.get()) is not None:
+                name, data = item
+                yield f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(events(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache"})
 
     def _agent_call(fn: Callable[[Any], dict[str, Any]]) -> dict[str, Any]:
         svc = st.require()

@@ -1,11 +1,34 @@
 export type Support = "supported" | "partial" | "unsupported";
 export type Confidence = "high" | "medium" | "low" | "none";
 
+export type BlockType = "text" | "table" | "steps" | "code" | "chart";
+
 export interface Sentence {
   text: string;
   citations: number[];
   support: Support;
   support_score: number;
+  type?: BlockType;
+  data?: {
+    columns?: string[];
+    rows?: string[][];
+    items?: string[];
+    lang?: string;
+    code?: string;
+    kind?: "bar";
+    labels?: string[];
+    values?: number[];
+    unit?: string;
+  };
+  note?: string;
+}
+
+export interface Stage {
+  name: "retrieving" | "retrieved" | "generating" | "verifying";
+  n?: number;
+  top?: number;
+  titles?: string[];
+  blocks?: number;
 }
 
 export interface SourceHit {

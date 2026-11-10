@@ -1,3 +1,4 @@
+import json
 import time
 from datetime import UTC, datetime
 
@@ -161,3 +162,13 @@ def test_demo_services_load():
     app = create_app(load_demo_services, background_load=False, static_dir=None)
     with TestClient(app) as c:
         assert c.get("/api/health").json()["pages"] == 3
+
+
+def test_ask_stream_emits_stages_then_answer(env):
+    c, _, _ = env
+    with c.stream("POST", "/api/ask/stream", json={"question": "kubectl rollout restart"}) as r:
+        body = "".join(r.iter_text())
+    events = [ln[7:] for ln in body.splitlines() if ln.startswith("event: ")]
+    assert events == ["retrieving", "retrieved", "generating", "verifying", "answer"]
+    last = json.loads(body.strip().split("data: ")[-1])
+    assert last["answerable"] and last["sentences"][0]["type"] == "text"

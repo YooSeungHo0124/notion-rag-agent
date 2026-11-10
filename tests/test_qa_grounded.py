@@ -93,3 +93,55 @@ def test_properties_to_text_skips_title_and_empty():
     assert properties_to_text(page).splitlines() == [
         "상태: 진행 중", "메모: OOM 해결", "완료: 예", "기간: 2026-09-01 ~ 2026-09-03",
     ]
+
+
+def test_blocks_table_chart_code_verified_against_sources():
+    hits = [hit(1, "batch 4 gives 1.8 fps and batch 8 gives 3.2 fps"),
+            hit(2, "docker build -t app .\ndocker run app")]
+    llm = StubLLM({"answerable": True, "blocks": [
+        {"type": "text", "text": "batch 4 gives 1.8 fps", "citations": ["S1"]},
+        {"type": "table", "columns": ["batch", "fps"], "rows": [["4", "1.8"], ["8", "3.2"]],
+         "citations": ["S1"]},
+        {"type": "chart", "chart_kind": "bar", "labels": ["4", "8"], "values": [1.8, 9.9],
+         "unit": "fps", "citations": ["S1"]},
+        {"type": "code", "lang": "bash", "code": "docker build -t app .\ndocker run app",
+         "citations": ["S2"]},
+        {"type": "table", "columns": [], "rows": [], "citations": ["S1"]},  # unusable -> dropped
+    ]})
+    a = GroundedQA(StubRetriever(hits), llm, OverlapVerifier()).answer("fps?")
+    types = [s.type for s in a.sentences]
+    assert types == ["text", "table", "chart", "code"]
+    table, chart, code = a.sentences[1], a.sentences[2], a.sentences[3]
+    assert table.support == "supported" and table.data["rows"][1] == ["8", "3.2"]
+    assert chart.support == "unsupported" and "9.9" in chart.note  # invented number caught
+    assert code.support == "supported" and code.data["lang"] == "bash"
+
+
+def test_progress_events_emitted_in_order():
+    events = []
+    llm = StubLLM({"answerable": True, "blocks": [
+        {"type": "text", "text": "batch size reduced to 8", "citations": ["S1"]}]})
+    qa = GroundedQA(StubRetriever([hit(1, "batch size reduced to 8")]), llm, OverlapVerifier())
+    qa.answer("q", on_event=lambda e, d: events.append(e))
+    assert events == ["retrieving", "retrieved", "generating", "verifying"]
+
+
+def test_missing_citation_for_table_numbers_is_attached_and_leadin_inherits():
+    hits = [hit(1, "batch 4 gives 1.8 fps"), hit(2, "batch 8 gives 3.2 fps")]
+    llm = StubLLM({"answerable": True, "blocks": [
+        {"type": "text", "text": "비교는 다음과 같습니다.", "citations": []},
+        {"type": "table", "columns": ["batch", "fps"], "rows": [["4", "1.8"], ["8", "3.2"]],
+         "citations": ["S1"]},
+    ]})
+    a = GroundedQA(StubRetriever(hits), llm, OverlapVerifier()).answer("fps?")
+    lead, table = a.sentences
+    assert table.support == "supported" and sorted(table.citations) == [1, 2]
+    assert lead.support == "supported" and len(a.sources) == 2
+
+
+def test_rounded_numbers_accepted_but_invented_rejected():
+    from notion_agent.qa.grounded import _num_in
+
+    src = {"771.8", "1.38", "20"}
+    assert _num_in("772", src) and _num_in("771", src) and _num_in("1.4", src) and _num_in("20", src)
+    assert not _num_in("770", src) and not _num_in("21", src) and not _num_in("1.5", src)
