@@ -330,3 +330,14 @@ svg.lucide{width:16px;height:16px;stroke-width:1.75;flex:none}
 .boot{display:grid;place-items:center;height:100%;color:var(--text-muted);gap:8px}
 .spin{animation:spin .8s linear infinite}
 .empty .ex button:disabled{opacity:.5;cursor:default}
+/* history item delete */
+.hist-item{position:relative;display:flex;align-items:center}
+.hist-item>button:first-child{flex:1;min-width:0;padding-right:30px}
+.hist .hist-del{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:24px;height:24px;padding:0;display:grid;place-items:center;border-radius:6px;color:var(--text-muted);opacity:0;transition:opacity .12s}
+.hist .hist-del svg{width:14px;height:14px}
+.hist-item:hover .hist-del,.hist .hist-del:focus-visible{opacity:1}
+.hist .hist-del:hover{background:var(--bg-subtle);color:var(--bad)}
+@media (hover:none){.hist .hist-del{opacity:1}}
+.undo-bar{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);z-index:61;display:flex;align-items:center;gap:12px;background:var(--text);color:var(--bg);padding:8px 8px 8px 14px;border-radius:8px;font-size:13px;box-shadow:var(--float);animation:fade .15s ease-out}
+.undo-bar button{color:var(--bg);font-weight:600;padding:4px 10px;border-radius:6px;background:color-mix(in srgb,var(--bg) 18%,transparent)}
+.undo-bar button:hover{background:color-mix(in srgb,var(--bg) 28%,transparent)}
