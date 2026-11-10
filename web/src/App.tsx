@@ -39,6 +39,8 @@ export default function App() {
   const [notice, setNotice] = useState(() => !loadJSON<boolean>(K_NOTICE, false));
   const [input, setInput] = useState("");
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [undo, setUndo] = useState<{ conv: Conv; index: number; saved: string[] } | null>(null);
+  const undoT = useRef<number | undefined>(undefined);
   const [hover, setHover] = useState<{ x: number; y: number; hit: SourceHit } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -183,6 +185,33 @@ export default function App() {
     setDrawer(false);
     setInput("");
     setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  /* ---------- delete conversation (with undo) ---------- */
+  const deleteConv = (id: string) => {
+    const index = convs.findIndex((c) => c.id === id);
+    const c = convs[index];
+    if (!c) return;
+    if (busy && c.turns.some((t) => t.id === busy)) return toast("답변 생성 중인 대화는 삭제할 수 없습니다");
+    const turnIds = new Set(c.turns.map((t) => t.id));
+    const removedSaved = saved.filter((x) => turnIds.has(x));
+    setConvs((cs) => cs.filter((x) => x.id !== id));
+    setSaved((s) => s.filter((x) => !turnIds.has(x)));
+    if (cur === id) {
+      setCur(null);
+      setPanel(null);
+    }
+    setUndo({ conv: c, index, saved: removedSaved });
+    clearTimeout(undoT.current);
+    undoT.current = window.setTimeout(() => setUndo(null), 6000);
+  };
+  const undoDelete = () => {
+    if (!undo) return;
+    const { conv: c, index, saved: sv } = undo;
+    setConvs((cs) => [...cs.slice(0, index), c, ...cs.slice(index)]);
+    setSaved((s) => [...s, ...sv]);
+    setUndo(null);
+    clearTimeout(undoT.current);
   };
 
   /* ---------- source panel ---------- */
@@ -420,6 +449,7 @@ export default function App() {
           setDrawer(false);
         }}
         onNew={newConv}
+        onDelete={deleteConv}
         savedCount={saved.length}
         onSaved={() => {
           if (!savedTurns.length) return toast("저장한 답변이 없습니다");
@@ -609,6 +639,12 @@ export default function App() {
           <div className="p">{[...(hover.hit.path ?? []), ...(hover.hit.heading_path ?? [])].join(" › ")}</div>
           <div className="x">{hover.hit.text}</div>
           <div className="k">클릭: 출처 패널 · Shift+클릭: 노션 창</div>
+        </div>
+      )}
+      {undo && (
+        <div className="undo-bar" role="status" aria-live="polite">
+          <span>대화를 삭제했습니다 · “{undo.conv.title.slice(0, 24)}{undo.conv.title.length > 24 ? "…" : ""}”</span>
+          <button onClick={undoDelete}>실행 취소</button>
         </div>
       )}
       <div className={`toast${toastMsg ? " show" : ""}`} role="status" aria-live="polite">

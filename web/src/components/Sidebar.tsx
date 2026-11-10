@@ -1,4 +1,4 @@
-import { Bookmark, ChevronDown, ChevronRight, FolderSearch, Moon, Plus, RefreshCw, Search, Sun } from "lucide-react";
+import { Bookmark, ChevronDown, ChevronRight, FolderSearch, Moon, Plus, RefreshCw, Search, Sun, Trash2 } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import type { Conv, Health, PageSource, SyncStatus } from "../types";
 import { relTime } from "../util";
@@ -17,6 +17,7 @@ export function Sidebar(p: {
   convs: Conv[];
   current: string | null;
   onSelect: (id: string) => void;
+  onDelete: (id: string) => void;
   onNew: () => void;
   savedCount: number;
   onSaved: () => void;
@@ -67,9 +68,19 @@ export function Sidebar(p: {
           <div key={k}>
             <h4>{k}</h4>
             {cs.map((c) => (
-              <button key={c.id} aria-current={c.id === p.current} onClick={() => p.onSelect(c.id)} title={c.title}>
-                {c.title}
-              </button>
+              <div key={c.id} className="hist-item">
+                <button aria-current={c.id === p.current} onClick={() => p.onSelect(c.id)} title={c.title}>
+                  {c.title}
+                </button>
+                <button
+                  className="hist-del"
+                  aria-label={`대화 삭제: ${c.title}`}
+                  title="대화 삭제"
+                  onClick={() => p.onDelete(c.id)}
+                >
+                  <Trash2 />
+                </button>
+              </div>
             ))}
           </div>
         ))}
