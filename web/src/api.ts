@@ -1,4 +1,4 @@
-import type { AgentRun, Answer, Stage, Health, PageSource, SyncStatus } from "./types";
+import type { AgentRun, Answer, PageDoc, Stage, Health, PageSource, SyncStatus } from "./types";
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, {
@@ -27,9 +27,15 @@ export const api = {
   ask: (question: string, page_ids: string[]) =>
     req<Answer>("/api/ask", { method: "POST", body: JSON.stringify({ question, page_ids }) }),
   /** SSE: stage events while the pipeline runs, resolves with the final answer. */
-  askStream: async (question: string, page_ids: string[], onStage: (s: Stage) => void) => {
+  askStream: async (
+    question: string,
+    page_ids: string[],
+    onStage: (s: Stage) => void,
+    signal?: AbortSignal,
+  ) => {
     const r = await fetch("/api/ask/stream", {
       method: "POST",
+      signal,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ question, page_ids }),
     });
@@ -55,11 +61,13 @@ export const api = {
   },
   agent: (question: string, thread_id?: string) =>
     req<AgentRun>("/api/agent", { method: "POST", body: JSON.stringify({ question, thread_id }) }),
-  resume: (thread_id: string, approved: boolean) =>
+  resume: (thread_id: string, approved: boolean, args?: Record<string, unknown>) =>
     req<AgentRun>("/api/agent/resume", {
       method: "POST",
-      body: JSON.stringify({ thread_id, approved }),
+      body: JSON.stringify({ thread_id, approved, args: args ?? null }),
     }),
+  page: (page_id: string, live: boolean) =>
+    req<PageDoc>(`/api/page/${encodeURIComponent(page_id)}?live=${live ? 1 : 0}`),
   sync: () => req<SyncStatus>("/api/sync", { method: "POST", body: "{}" }),
   syncStatus: () => req<SyncStatus>("/api/sync/status"),
 };

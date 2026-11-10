@@ -49,6 +49,7 @@ class Services:
     qa: GroundedQA
     run_sync: Callable[[bool], SyncReport] | None = None  # arg: full
     agent: Any | None = None  # notion_agent.agent.graph.NotionAgent
+    pages: Any | None = None  # notion_agent.api.pages.PageLoader
     last_sync: Callable[[], str | None] = lambda: None
 
 
@@ -252,6 +253,29 @@ def create_app(
     async def ask(req: AskRequest) -> dict[str, Any]:
         return await run_in_threadpool(_ask, req)
 
+    @app.get("/api/page/{page_id}")
+    def page(page_id: str, refresh: bool = False, live: bool = True) -> dict[str, Any]:
+        """Source viewer content. live=0 -> indexed chunks (instant, reads Qdrant under the
+        store lock); live=1 -> Notion API (cached 5 min, can take seconds on big pages; falls
+        back to the index)."""
+        svc = st.require()
+        if svc.pages is None:
+            raise HTTPException(501, "page viewer not configured")
+        if live:
+            p = svc.pages.get(page_id, refresh=refresh, live=True)
+            if p is None:
+                raise HTTPException(502, "노션에서 페이지를 가져오지 못했습니다")
+        else:
+            if not st.lock.acquire(timeout=30):
+                raise HTTPException(503, "서버가 바쁩니다")
+            try:
+                p = svc.pages.get(page_id, live=False)
+            finally:
+                st.lock.release()
+        if p is None:
+            raise HTTPException(404, "페이지를 찾을 수 없습니다")
+        return p
+
     @app.post("/api/ask/stream")
     def ask_stream(req: AskRequest) -> StreamingResponse:
         """Server-sent events: stage updates (retrieving/retrieved/generating/verifying),
@@ -402,11 +426,19 @@ def load_real_services() -> Services:
             state.close()
 
     from notion_agent.agent.factory import build_agent
+    from notion_agent.api.pages import PageLoader, index_fetcher, live_fetcher
+
+    live = None
+    if s.notion_token:
+        from notion_agent.ingest.notion_reader import NotionReader
+
+        live = live_fetcher(NotionReader.from_settings(s))
 
     return Services(
         store=retriever.store,
         qa=qa,
         agent=build_agent(s, qa),
+        pages=PageLoader(live, index_fetcher(retriever.store)),
         run_sync=run_sync,
         last_sync=lambda: read_last_sync(s.state_db),
     )

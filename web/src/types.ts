@@ -55,6 +55,7 @@ export interface SourceHit {
   tags: string[];
   last_edited_time: string;
   rerank_score: number;
+  block_ids?: string[];
 }
 
 export interface Answer {
@@ -69,6 +70,7 @@ export interface Answer {
   latency_ms: number;
   total_ms?: number;
   followups?: string[];
+  closest?: SourceHit | null;
 }
 
 export interface PageSource {
@@ -126,4 +128,44 @@ export interface AgentRun {
   answer: (Answer & { kind: "answer" }) | { kind: "action"; steps: AgentStep[] } | null;
   done_reason: string | null;
   total_ms: number;
+}
+
+export interface PageBlock {
+  id: string;
+  type: string;
+  text: string;
+  level: number | null;
+  block_ids?: string[];
+}
+
+export interface PageDoc {
+  page_id: string;
+  title: string;
+  url: string;
+  path?: string[];
+  last_edited_time: string | null;
+  blocks: PageBlock[];
+  source: "notion" | "index";
+}
+
+export interface Turn {
+  id: string;
+  q: string;
+  mode: "ask" | "agent";
+  startedAt: number;
+  stage?: Stage;
+  retrieved?: Stage;
+  answer?: Answer;
+  run?: AgentRun;
+  error?: string;
+  stopped?: boolean;
+  doneMs?: number;
+}
+
+export interface Conv {
+  id: string;
+  title: string;
+  updatedAt: number;
+  turns: Turn[];
+  scope?: { label: string; page_ids: string[] } | null;
 }
