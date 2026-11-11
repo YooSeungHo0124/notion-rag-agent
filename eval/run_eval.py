@@ -205,6 +205,12 @@ def main() -> None:
     with md.open("a") as f:
         f.write("\n".join(lines) + "\n")
     print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+    from eval.tracking import file_hash, log_run
+
+    log_run("notes-rag", args.tag,
+            {"n": len(rows), "agent": args.agent, "dataset_sha": file_hash(DATASET),
+             "config": report["config"]},
+            {"retrieval": report["retrieval"], "answers": report.get("answers", {})})
     flush()
 
 

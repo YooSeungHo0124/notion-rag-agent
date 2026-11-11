@@ -272,6 +272,18 @@ stateDiagram-v2
 - **블록형 2단계에서 정확도가 올랐습니다(90% → 95%, 2문항).** 결론을 맨 위에 먼저 쓰게 한 구성이 질문의 핵심 값을 놓치지 않게 한 것으로 보입니다. 다만 40문항 중 2문항 차이라 큰 개선으로 단정하지는 않습니다. 응답 시간이 늘어난 대신 스트리밍으로 첫 블록은 약 3초에 보입니다.
 - **평가 데이터의 한계:** 질문을 Claude가 만들어서 실제 질문보다 쉬울 수 있습니다. 직접 쓴 질문 세트가 다음 과제입니다.
 
+### 실험 기록 (MLflow)
+
+평가를 돌릴 때마다 결과가 MLflow에 자동으로 기록됩니다([`eval/tracking.py`](eval/tracking.py)). 실험은 `notes-rag`(노트 검색·답변)과 `erp-agent`(ERP 에이전트) 두 개입니다.
+
+- **무엇을 남기나:** 검색 설정(파라미터), 지표(Recall@k, MRR, 정확도, 응답 시간), 그리고 재현용 태그(git 커밋, 커밋 안 된 수정 여부, 평가 세트 해시)입니다.
+- **무엇을 안 남기나:** 질문, 답변, 노트 본문은 기록하지 않습니다. 기록 저장소(`mlruns/`)는 로컬에만 있고 git에서 제외됩니다.
+- 이전에 만든 결과 파일 11개도 `python -m eval.tracking backfill`로 옮겨서, 기준선부터 현재까지 한 화면에서 비교할 수 있습니다.
+
+```bash
+uv run mlflow ui --backend-store-uri sqlite:///mlruns/mlflow.db --port 5000   # http://127.0.0.1:5000
+```
+
 ---
 
 ## 기술 스택
@@ -292,6 +304,7 @@ stateDiagram-v2
 | 프런트엔드 | **React 19** + Vite + TypeScript, lucide 아이콘, Pretendard | 컴포넌트 레지스트리로 블록을 렌더링. 디자인 시안은 v0로 만들고 직접 이식 |
 | 관측 | **Arize Phoenix** + OpenTelemetry (OpenInference) | LangGraph 노드, `claude -p`, 검색, 재정렬, 도구까지 한 트레이스로 |
 | 평가 | 자체 하네스 (Recall@k, MRR, LLM 채점, 거절 정확도) | 변경 전후를 같은 기준으로 비교 |
+| 실험 기록 | **MLflow** 3 (로컬 SQLite 저장소) | 실행마다 설정·지표·git 커밋·평가 세트 해시를 남겨 결과를 재현 가능하게 |
 | 하드웨어 | RTX 5080 16GB (CUDA 12.8 wheels) | 전체 색인 시 VRAM 최대 9.6GB |
 
 ---
@@ -325,7 +338,7 @@ tests/             81개 (가짜 LLM·임베딩으로 GPU 없이 실행)
 ```bash
 # 0) 준비: uv, NVIDIA GPU(CUDA 12.8+), Claude Code 로그인(claude -p 사용)
 curl -LsSf https://astral.sh/uv/install.sh | sh
-uv sync --extra ingest --extra rag --extra api --extra trace
+uv sync --extra ingest --extra rag --extra api --extra trace --extra mlops
 cp .env.example .env            # NOTION_TOKEN 입력 (노션 integration에 페이지 접근 권한 부여)
 
 # 1) 노션 동기화 (처음엔 전체, 이후엔 변경분만)
