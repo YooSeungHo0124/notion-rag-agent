@@ -36,6 +36,8 @@ class RetrievalConfig(BaseModel):
     candidate_k: int = 50
     final_k: int = 5
     reranker_model: str = "BAAI/bge-reranker-v2-m3"
+    # LoRA adapter from training/rerank_ft.py (path relative to the project, "" = base model)
+    reranker_adapter: str = ""
     min_rerank_score: float = 0.2
 
 

@@ -13,9 +13,10 @@ class Reranker:
     """FlagEmbedding FlagReranker wrapper; lazy-loads the model."""
 
     def __init__(
-        self, model_name: str, device: str = "cuda", batch_size: int = 16, max_length: int = 1024
+        self, model_name: str, device: str = "cuda", batch_size: int = 16, max_length: int = 1024,
+        adapter: str = "",
     ) -> None:
-        self.model_name, self.device = model_name, device
+        self.model_name, self.device, self.adapter = model_name, device, adapter
         self.batch_size, self.max_length = batch_size, max_length
         self._model: Any = None
 
@@ -24,9 +25,16 @@ class Reranker:
         if self._model is None:
             from FlagEmbedding import FlagReranker
 
-            self._model = FlagReranker(
-                self.model_name, use_fp16=self.device.startswith("cuda"), devices=self.device
-            )
+            fp16 = self.device.startswith("cuda")
+            m = FlagReranker(self.model_name, use_fp16=False, devices=self.device)
+            if self.adapter:  # fine-tuned LoRA (training/rerank_ft.py), merged into the weights
+                from peft import PeftModel
+
+                m.model = PeftModel.from_pretrained(m.model, self.adapter).merge_and_unload()
+            if fp16:
+                m.model.half()
+                m.use_fp16 = True
+            self._model = m
         return self._model
 
     def score(self, query: str, passages: list[str]) -> list[float]:

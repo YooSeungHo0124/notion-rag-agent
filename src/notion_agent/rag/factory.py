@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from notion_agent.config import Settings, get_settings
+from notion_agent.config import PROJECT_ROOT, Settings, get_settings
 from notion_agent.rag.embedder import DenseEmbedder, SparseEmbedder
 from notion_agent.rag.reranker import Reranker
 from notion_agent.rag.retriever import Retriever
@@ -52,4 +52,22 @@ def build_verifier(settings: Settings | None = None) -> Reranker:
     """The cross-encoder, shared by reranking and sentence-level grounding checks."""
     s = settings or get_settings()
     r = s.file.retrieval
-    return _get("reranker", lambda: Reranker(r.reranker_model, s.file.embedding.device))  # type: ignore[return-value]
+    return _get("reranker", lambda: Reranker(
+        r.reranker_model, s.file.embedding.device,
+        adapter=_adapter(r.reranker_adapter)))  # type: ignore[return-value]
+
+
+def _adapter(rel: str) -> str:
+    """Fine-tuned reranker adapter path, or "" (base model) when unset or not present.
+
+    Adapters are trained on personal notes and live under data/ (gitignored), so a fresh
+    clone silently falls back to the base model instead of failing."""
+    if not rel:
+        return ""
+    p = PROJECT_ROOT / rel
+    if not p.exists():
+        import logging
+
+        logging.getLogger(__name__).warning("reranker adapter %s not found; using base", p)
+        return ""
+    return str(p)
