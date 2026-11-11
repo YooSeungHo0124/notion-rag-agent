@@ -15,3 +15,15 @@ def test_score_key_averages_both_sets():
 
 def test_missing_adapter_falls_back_to_base():
     assert _adapter("") == "" and _adapter("data/does-not-exist") == ""
+
+
+def test_gate_requires_rank_gain_and_no_calibration_regression():
+    from training.rerank_ft import gate
+
+    base = {"test": {"MRR": 0.8}, "eval40": {"MRR": 0.8},
+            "calib": {"answerable_kept": 1.0, "unans_abstain": 0.5}}
+    good = {"test": {"MRR": 0.9}, "eval40": {"MRR": 0.85},
+            "calib": {"answerable_kept": 1.0, "unans_abstain": 0.5}}
+    miscal = {**good, "calib": {"answerable_kept": 0.97, "unans_abstain": 0.5}}
+    worse = {**good, "eval40": {"MRR": 0.79}}
+    assert gate(base, good) and not gate(base, miscal) and not gate(base, worse)

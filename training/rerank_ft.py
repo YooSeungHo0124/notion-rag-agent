@@ -74,6 +74,26 @@ def mine() -> None:
     print("wrote", MINED, len(out))
 
 
+def mine_unanswerable() -> None:
+    """Add the eval set's unanswerable questions (split `unans`, candidates only) to MINED,
+    so the gate can check that a model still lets the agent say "not in my notes"."""
+    from notion_agent.rag.factory import build_retriever
+
+    r = build_retriever(get_settings())
+    rows = [x for x in read_jsonl(MINED) if x["split"] != "unans"]
+    for x in read_jsonl(DATASET):
+        if x.get("answerable"):
+            continue
+        q = x["question"]
+        cands = r.store.hybrid_search(r.dense.embed_query(q), r.sparse.embed_query(q),
+                                      CAND_K, None)
+        rows.append({"question": q, "split": "unans", "chunk_id": None, "fused_rank": None,
+                     "cands": [[str(c.payload.get("chunk_id", c.id)), _text(c.payload)]
+                               for c in cands]})
+    MINED.write_text("".join(json.dumps(o, ensure_ascii=False) + "\n" for o in rows))
+    print("unanswerable rows:", sum(x["split"] == "unans" for x in rows))
+
+
 # ---------------------------------------------------------------- model helpers
 def load_model(base: str, adapter: Path | None = None, train: bool = False, lora_r: int = 16):
     import torch
@@ -97,7 +117,7 @@ def load_model(base: str, adapter: Path | None = None, train: bool = False, lora
     return tok, model.cuda()
 
 
-def score(tok, model, q: str, passages: list[str], max_len: int = 512, bs: int = 32):
+def score(tok, model, q: str, passages: list[str], max_len: int = 1024, bs: int = 16):
     import torch
 
     model.eval()
@@ -112,7 +132,11 @@ def score(tok, model, q: str, passages: list[str], max_len: int = 512, bs: int =
 
 # ---------------------------------------------------------------- train
 def train(epochs: int = 1, group: int = 8, bs: int = 2, accum: int = 8, lr: float = 1e-4,
-          lora_r: int = 16, max_len: int = 384, seed: int = 0) -> dict[str, Any]:
+          lora_r: int = 16, max_len: int = 384, seed: int = 0,
+          bce: float = 0.0) -> dict[str, Any]:
+    """Listwise softmax-CE ranks the positive first; `bce` > 0 adds a pointwise BCE term
+    (positive -> 1, negatives -> 0) that keeps sigmoid scores calibrated, because production
+    uses an absolute threshold (min_rerank_score) to decide "not in my notes"."""
     import torch
 
     random.seed(seed)
@@ -142,7 +166,13 @@ def train(epochs: int = 1, group: int = 8, bs: int = 2, accum: int = 8, lr: floa
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 logits = model(**enc).logits.view(len(batch), group).float()
             loss = torch.nn.functional.cross_entropy(
-                logits, torch.zeros(len(batch), dtype=torch.long, device="cuda")) / accum
+                logits, torch.zeros(len(batch), dtype=torch.long, device="cuda"))
+            if bce:
+                target = torch.zeros_like(logits)
+                target[:, 0] = 1.0
+                loss = loss + bce * torch.nn.functional.binary_cross_entropy_with_logits(
+                    logits, target, pos_weight=torch.tensor(float(group - 1), device="cuda"))
+            loss = loss / accum
             loss.backward()
             losses.append(loss.item() * accum)
             if (i // bs + 1) % accum == 0 and step < steps:
@@ -168,12 +198,16 @@ def evaluate(adapter: Path | None) -> dict[str, dict[str, float]]:
 
     s = get_settings()
     tok, model = load_model(s.file.retrieval.reranker_model, adapter)
-    rows = [r for r in read_jsonl(MINED) if r["split"] in ("test", "eval40")]
+    rows = [r for r in read_jsonl(MINED) if r["split"] in ("test", "eval40", "unans")]
     res: dict[str, list[int | None]] = {"test": [], "eval40": []}
     fused: dict[str, list[int | None]] = {"test": [], "eval40": []}
+    top: dict[str, list[float]] = {"test": [], "eval40": [], "unans": []}
     for r in rows:
         ids = [c[0] for c in r["cands"]]
         sc = score(tok, model, r["question"], [c[1] for c in r["cands"]])
+        top[r["split"]].append(1 / (1 + math.exp(-max(sc))))  # same sigmoid as production
+        if r["split"] == "unans":
+            continue
         order = [ids[i] for i in sorted(range(len(ids)), key=lambda i: -sc[i])]
         res[r["split"]].append(order.index(r["chunk_id"]) + 1 if r["chunk_id"] in order else None)
         fused[r["split"]].append(r["fused_rank"])
@@ -186,6 +220,11 @@ def evaluate(adapter: Path | None) -> dict[str, dict[str, float]]:
                 "R_at_5": sum(1 for x in ranks if x and x <= 5) / n,
                 "MRR": sum(1 / x for x in ranks if x) / n}
     out = {k: m(v) for k, v in res.items()} | {f"fused_{k}": m(v) for k, v in fused.items()}
+    thr = s.file.retrieval.min_rerank_score
+    ans = top["test"] + top["eval40"]
+    out["calib"] = {"answerable_kept": sum(x >= thr for x in ans) / max(len(ans), 1),
+                    "unans_abstain": sum(x < thr for x in top["unans"]) / max(len(top["unans"]), 1),
+                    "min_answerable_top": min(ans) if ans else 0.0}
     out["_ranks"] = res  # per-question ranks, for the paired win/loss count
     return out
 
@@ -221,6 +260,16 @@ def _pyfunc():  # type: ignore[no-untyped-def]
     import mlflow.pyfunc
 
     return type("NraReranker", (RerankerPyfunc, mlflow.pyfunc.PythonModel), {})()
+
+
+def gate(base: dict, ft: dict) -> bool:
+    """Promotable only if ranking improves on BOTH sets and calibration does not regress:
+    no extra answerable question falls under the threshold, no lost abstention."""
+    rank_ok = all(ft[k]["MRR"] > base[k]["MRR"] for k in ("test", "eval40"))
+    b, f = base.get("calib"), ft.get("calib")
+    calib_ok = b is None or (f["answerable_kept"] >= b["answerable_kept"]
+                             and f["unans_abstain"] >= b["unans_abstain"])
+    return rank_ok and calib_ok
 
 
 def score_key(m: dict) -> float:
@@ -268,8 +317,9 @@ def track(params: dict, train_m: dict, base: dict, ft: dict) -> None:
     pw = paired(base, ft)
     base = {k: v for k, v in base.items() if k != "_ranks"}
     ft = {k: v for k, v in ft.items() if k != "_ranks"}
-    beats = all(ft[k]["MRR"] > base[k]["MRR"] for k in ("test", "eval40"))
-    with mlflow.start_run(run_name=f"lora-r{params['lora_r']}-ep{params['epochs']}") as run:
+    beats = gate(base, ft)
+    name = f"lora-r{params['lora_r']}-ep{params['epochs']}-lr{params['lr']}-bce{params['bce']}"
+    with mlflow.start_run(run_name=name) as run:
         mlflow.set_tags(_git() | {"beats_base": str(beats)})
         mlflow.log_params(params)
         mlflow.log_metrics({k: float(v) for k, v in _flat(
@@ -280,27 +330,32 @@ def track(params: dict, train_m: dict, base: dict, ft: dict) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["mine", "train", "eval", "all"])
+    ap.add_argument("cmd", choices=["mine", "mine-unans", "train", "eval", "all"])
     ap.add_argument("--adapter", type=Path, default=None)
     ap.add_argument("--epochs", type=int, default=1)
     ap.add_argument("--lora-r", type=int, default=16)
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--group", type=int, default=8)
+    ap.add_argument("--bce", type=float, default=0.0, help="pointwise BCE weight (calibration)")
     a = ap.parse_args()
     if a.cmd in ("mine", "all") and (a.cmd == "mine" or not MINED.exists()):
         mine()
+    if a.cmd == "mine-unans":
+        mine_unanswerable()
     if a.cmd == "eval":
         b, f = evaluate(None), evaluate(a.adapter or ADAPTER)
         strip = lambda d: {k: v for k, v in d.items() if k != "_ranks"}  # noqa: E731
         print(json.dumps({"paired": paired(b, f), "base": strip(b), "ft": strip(f)}, indent=1))
     if a.cmd in ("train", "all"):
         params = {"epochs": a.epochs, "lora_r": a.lora_r, "lr": a.lr, "group": a.group,
+                  "bce": a.bce, "eval_max_len": 1024,
                   "base": get_settings().file.retrieval.reranker_model}
-        tm = train(epochs=a.epochs, group=a.group, lr=a.lr, lora_r=a.lora_r)
+        tm = train(epochs=a.epochs, group=a.group, lr=a.lr, lora_r=a.lora_r, bce=a.bce)
         base, ft = evaluate(None), evaluate(ADAPTER)
         print(json.dumps({"train": tm, "paired": paired(base, ft),
                           "test": [base["test"], ft["test"]],
-                          "eval40": [base["eval40"], ft["eval40"]]}, indent=1))
+                          "eval40": [base["eval40"], ft["eval40"]],
+                          "calib": [base["calib"], ft["calib"]]}, indent=1))
         track(params, tm, base, ft)
 
 
