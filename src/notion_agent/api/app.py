@@ -26,11 +26,12 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from notion_agent.ingest.sync import SyncReport
+from notion_agent.llm.base import LLMError
 from notion_agent.qa.grounded import GroundedQA
 from notion_agent.qa.serialize import answer_to_json, hit_to_json  # noqa: F401 (re-export)
 from notion_agent.rag.store import QdrantStore, SearchFilters
@@ -226,6 +227,12 @@ def create_app(
         yield
 
     app = FastAPI(title="notion-rag-agent", lifespan=lifespan)
+
+    @app.exception_handler(LLMError)
+    async def llm_error(_: Any, exc: LLMError) -> JSONResponse:
+        # e.g. bad/missing ANTHROPIC_API_KEY, `claude -p` not logged in, rate limit
+        return JSONResponse(status_code=503,
+                            content={"detail": f"LLM 호출에 실패했습니다: {str(exc)[:300]}"})
     app.state.nra = st
 
     @app.get("/api/health")

@@ -57,3 +57,18 @@ def test_strict_recurses_into_nested_objects():
 def test_missing_key_is_a_clear_error():
     with pytest.raises(LLMError, match="ANTHROPIC_API_KEY"):
         AnthropicAPIClient("")
+
+
+def test_api_maps_llm_error_to_503():
+    from fastapi.testclient import TestClient
+
+    from notion_agent.api.app import create_app
+
+    app = create_app(loader=lambda: None, background_load=False, static_dir=None)
+
+    @app.get("/boom")
+    def boom():
+        raise LLMError("invalid x-api-key")
+
+    r = TestClient(app).get("/boom")
+    assert r.status_code == 503 and "invalid x-api-key" in r.json()["detail"]
