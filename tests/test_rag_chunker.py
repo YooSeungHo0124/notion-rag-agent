@@ -90,3 +90,13 @@ def test_oversized_code_parts_have_balanced_fences():
     assert len(cs) > 1
     assert all(c.text.count("```") % 2 == 0 for c in cs)
     assert all(c.text.startswith("```python") for c in cs)
+
+
+def test_toggle_heading_with_code_child_keeps_fences_balanced():
+    body = "### `version 1`\nnote\n```python\n" + "x = 1  # step\n" * 40 + "```\nafter"
+    page = make_page("p2", "T", [("heading_3", body, 3)])
+    chunks = chunk_page(page, CFG)
+    assert len(chunks) > 2
+    for c in chunks:
+        assert c.text.count("```") % 2 == 0, c.text
+    assert chunks[1].text.startswith("```python")
