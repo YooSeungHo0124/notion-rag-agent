@@ -284,6 +284,14 @@ stateDiagram-v2
 uv run mlflow ui --backend-store-uri sqlite:///mlruns/mlflow.db --port 5000   # http://127.0.0.1:5000
 ```
 
+### 야간 파이프라인 (Airflow)
+
+[`dags/nra_nightly.py`](dags/nra_nightly.py)가 매일 03:00에 **앱 준비 확인 → 노션 증분 동기화 → ERP 평가 → 품질 게이트**를 차례로 실행합니다.
+
+- **Airflow는 순서만 정합니다.** GPU 모델, Qdrant, 노션·Odoo 인증 정보는 실행 중인 앱에만 있고, Airflow는 앱의 HTTP API를 호출합니다. 그래서 스케줄러에는 GPU도 비밀값도 필요 없습니다.
+- **품질 게이트:** 답변 정확도가 0.85 미만이거나 기록에 없는 질문을 하나라도 지어내 답하면 실행이 실패로 표시됩니다. 결과는 MLflow에 커밋 번호와 함께 남아 어느 변경에서 떨어졌는지 바로 비교할 수 있습니다.
+- 실제 1회 실행 결과: 동기화(변경 3페이지) → 평가 14/14 → 게이트 통과, 약 5분.
+
 ---
 
 ## 기술 스택
@@ -305,6 +313,7 @@ uv run mlflow ui --backend-store-uri sqlite:///mlruns/mlflow.db --port 5000   # 
 | 프런트엔드 | **React 19** + Vite + TypeScript, lucide 아이콘, Pretendard | 컴포넌트 레지스트리로 블록을 렌더링. 디자인 시안은 v0로 만들고 직접 이식 |
 | 관측 | **Arize Phoenix** + OpenTelemetry (OpenInference) | LangGraph 노드, `claude -p`, 검색, 재정렬, 도구까지 한 트레이스로 |
 | 평가 | 자체 하네스 (Recall@k, MRR, LLM 채점, 거절 정확도) | 변경 전후를 같은 기준으로 비교 |
+| 스케줄링 | **Airflow** 3 (TaskFlow DAG, compose `airflow` 프로필) | 동기화·평가·품질 게이트를 매일 자동 실행. 앱 API만 호출해 스케줄러와 GPU 작업을 분리 |
 | 실험 기록 | **MLflow** 3 (로컬 SQLite 저장소) | 실행마다 설정·지표·git 커밋·평가 세트 해시를 남겨 결과를 재현 가능하게 |
 | 하드웨어 | RTX 5080 16GB (CUDA 12.8 wheels) | 전체 색인 시 VRAM 최대 9.6GB |
 
@@ -360,6 +369,10 @@ uv run python eval/erp_eval.py --label mytest    # ERP 평가 (서버 실행 중
 # 4) (선택) 컨테이너로 실행: LLM은 Anthropic API (구독 로그인은 이미지에 넣지 않음)
 #    로컬 서버를 먼저 끄고 (임베디드 Qdrant 파일 잠금, GPU 메모리)
 ANTHROPIC_API_KEY=... docker compose --profile app up -d --build app   # http://127.0.0.1:8000
+
+# 5) (선택) 야간 파이프라인: Airflow UI http://127.0.0.1:8080 (관리자 비밀번호는 컨테이너 로그/standalone 파일)
+docker compose --profile airflow up -d airflow   # DAG는 일시정지 상태로 등록됨. UI에서 켜거나:
+docker compose exec airflow airflow dags test nra_nightly
 
 # 그 밖에
 uv run nra ask "OOM 났을 때 batch 몇으로 줄였지?"     # 터미널에서 질문

@@ -73,8 +73,38 @@ services:
           devices: [{driver: nvidia, count: 1, capabilities: [gpu]}]
     restart: unless-stopped
 
+  # --- Scheduler (profile "airflow"): nightly sync -> eval -> quality gate (dags/). ---
+  # Host network so it can reach the app on 127.0.0.1:8000; its UI is bound to 127.0.0.1.
+  airflow:
+    profiles: ["airflow"]
+    image: apache/airflow:3.0.6-python3.12
+    command: standalone
+    network_mode: host
+    user: "${AIRFLOW_UID:-1000}:0"
+    environment:
+      - AIRFLOW__API__HOST=127.0.0.1
+      - AIRFLOW__API__PORT=8080
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=True
+      - PYTHONPATH=/opt/nra
+      - NRA_API=http://127.0.0.1:8000
+      - MLFLOW_DISABLE_AGENT_HINT=1
+      - GIT_CONFIG_COUNT=1
+      - GIT_CONFIG_KEY_0=safe.directory
+      - GIT_CONFIG_VALUE_0=/opt/nra
+      - _PIP_ADDITIONAL_REQUIREMENTS=mlflow==3.18.0
+    volumes:
+      - ./dags:/opt/airflow/dags:ro
+      - ./eval:/opt/nra/eval            # eval code + run outputs
+      - ./mlruns:/opt/nra/mlruns        # shared MLflow store
+      - ./.git:/opt/nra/.git:ro         # so runs are tagged with the commit
+      - ./src:/opt/nra/src:ro           # (git dirty check)
+      - airflow-home:/opt/airflow
+    restart: unless-stopped
+
 networks:
   erp: {}
 
 volumes:
   odoo-data: {}
+  airflow-home: {}

@@ -47,6 +47,12 @@ def main() -> None:
     ap.add_argument("--api", default="http://127.0.0.1:8000")
     ap.add_argument("--label", default="erp-v1")
     args = ap.parse_args()
+    run(args.api, args.label)
+
+
+def run(api: str, label: str) -> dict:
+    """Run the whole set against `api`, save + track the run, return the summary."""
+    args = argparse.Namespace(api=api, label=label)
     data = json.loads((HERE / "erp_dataset.json").read_text())
     rows = []
     for it in data:
@@ -74,6 +80,7 @@ def main() -> None:
     log_run("erp-agent", args.label, {"n": len(rows), "api": args.api,
             "dataset_sha": file_hash(HERE / "erp_dataset.json")},
             summary | {"passed": sum(r["ok"] for r in rows)})
+    return summary
 
 
 if __name__ == "__main__":
