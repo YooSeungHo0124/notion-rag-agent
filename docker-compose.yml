@@ -1,5 +1,7 @@
-# Infra only. The app runs in the local uv venv so that `claude -p`
-# can use the host's subscription login without copying credentials into a container.
+# Infra (qdrant, phoenix, odoo) starts by default. The app itself normally runs in the local
+# uv venv so `claude -p` can use the host's subscription login; the containerized app
+# (profile "app") uses the Anthropic API instead:
+#   ANTHROPIC_API_KEY=... docker compose --profile app up -d --build app
 services:
   qdrant:
     image: qdrant/qdrant:v1.15.4
@@ -45,6 +47,30 @@ services:
     volumes:
       - odoo-data:/var/lib/odoo
     networks: [erp]
+    restart: unless-stopped
+
+  # --- The app (profile "app"): UI + API on GPU, LLM via Anthropic API. ---
+  app:
+    profiles: ["app"]
+    build: .
+    image: notion-rag-agent:latest
+    ports:
+      - "127.0.0.1:8000:8000"   # no auth: keep it local
+    env_file: [.env]
+    environment:
+      - LLM_PROVIDER=anthropic_api
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ODOO_URL=http://odoo:8069
+      - QDRANT_PATH=/app/data/qdrant
+      - STATE_DB=/app/data/state.db
+    volumes:
+      - ./data:/app/data                     # index + state (embedded Qdrant: stop the local server first)
+      - ${HF_HOME:-${HOME}/.cache/huggingface}:/models   # model weights, not baked into the image
+    networks: [default, erp]
+    deploy:
+      resources:
+        reservations:
+          devices: [{driver: nvidia, count: 1, capabilities: [gpu]}]
     restart: unless-stopped
 
 networks:

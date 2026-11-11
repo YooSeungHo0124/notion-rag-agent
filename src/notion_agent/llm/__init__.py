@@ -14,6 +14,15 @@ def get_llm() -> LLMClient:
             timeout_s=s.file.llm.timeout_s,
             max_retries=s.file.llm.max_retries,
         )
+    if s.llm_provider == "anthropic_api":
+        from notion_agent.llm.anthropic_api import AnthropicAPIClient
+
+        return AnthropicAPIClient(
+            api_key=s.anthropic_api_key,
+            model=s.llm_model,
+            timeout_s=s.file.llm.timeout_s,
+            max_retries=s.file.llm.max_retries,
+        )
     raise NotImplementedError(f"LLM provider {s.llm_provider!r} is not implemented yet")
 
 
