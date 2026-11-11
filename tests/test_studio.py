@@ -200,3 +200,30 @@ def test_review_questions_are_not_judged(env):
     q = res["sentences"][-1]
     assert q["text"].startswith("Q.") and q["support"] == "supported"
     assert res["supported_ratio"] == round(2 / 3, 4)  # summary+table ok, moon not; Q excluded
+
+
+def test_quiz_is_cleaned_and_verified_per_question(env):
+    c, llm, _ = env
+    orig = llm.complete
+
+    def complete(prompt, *, system=None, json_schema=None):
+        from notion_agent.qa.studio import QUIZ_SCHEMA
+
+        if json_schema is QUIZ_SCHEMA:
+            return LLMResponse("", structured={"questions": [
+                {"question": "파드를 재시작하는 명령은?", "answer": 1, "citations": ["S2"],
+                 "options": ["kubectl get", "kubectl rollout restart deployment", "ls", "rm"],
+                 "explanation": "kubectl rollout restart deployment pods"},
+                {"question": "달은 무엇으로 되어 있나?", "answer": 0, "citations": ["S1"],
+                 "options": ["cheese", "rock", "gas", "ice"], "explanation": "the moon is cheese"},
+                {"question": "broken", "answer": 7, "citations": [], "options": ["a", "b", "c"],
+                 "explanation": ""},
+            ]})
+        return orig(prompt, system=system, json_schema=json_schema)
+
+    llm.complete = complete
+    res = _sse(c.post("/api/studio/stream", json={"kind": "quiz"}))[-1][1]
+    q = res["quiz"]
+    assert len(q) == 2  # out-of-range answer dropped
+    assert q[0]["support"] == "supported" and q[1]["support"] == "unsupported"
+    assert q[0]["citations"] == [1] and len(res["sources"]) == 2

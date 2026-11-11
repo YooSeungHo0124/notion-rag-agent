@@ -5,6 +5,10 @@ Unlike Q&A (top-k chunks for one question), Studio reads every chunk of the sele
 guide. The output uses the same typed blocks as answers and goes through the SAME
 block-level verification, so every claim still carries citations and a support level.
 
+The quiz is verified per question: "question + correct option + explanation" is checked
+against the cited sources, so a question whose answer key is not backed by the notes is
+flagged instead of quietly testing the user on something the notes never said.
+
 The mind map is the exception: it is a structure of short labels, which a cross-encoder
 cannot meaningfully verify, so its nodes carry citations only (shown as "unverified").
 """
@@ -29,8 +33,8 @@ from notion_agent.qa.grounded import (
 from notion_agent.rag.retriever import Hit
 from notion_agent.rag.store import QdrantStore, SearchFilters, build_filter
 
-Kind = Literal["briefing", "study", "faq", "timeline", "guide", "mindmap"]
-KINDS: tuple[str, ...] = ("briefing", "study", "faq", "timeline", "guide", "mindmap")
+Kind = Literal["briefing", "study", "faq", "timeline", "guide", "mindmap", "quiz"]
+KINDS: tuple[str, ...] = ("briefing", "study", "faq", "timeline", "guide", "mindmap", "quiz")
 
 MAX_CHARS = 60_000  # material budget per generation (~20k tokens)
 TOPIC_K = 40  # chunks taken by retrieval when a topic narrows the scope
@@ -42,6 +46,7 @@ TITLES = {
     "timeline": "타임라인",
     "guide": "소스 가이드",
     "mindmap": "마인드맵",
+    "quiz": "퀴즈",
 }
 
 INSTRUCTIONS = {
@@ -77,6 +82,46 @@ MINDMAP_SYSTEM = """너는 사용자의 노션 기록으로 마인드맵을 만�
 - 루트는 전체 주제 한 마디. 1단계 가지 3~7개, 각 가지 아래 2~5개, 최대 3단계.
 - label은 짧은 명사구(15자 이내). 소스에 있는 개념만. 각 노드 citations에 근거 소스 id.
 - 비슷한 개념은 합치고, 같은 수준의 가지는 같은 종류(기능/단계/구성요소 등)로 맞춘다."""
+
+
+QUIZ_SYSTEM = """너는 사용자의 노션 기록으로 복습용 객관식 퀴즈를 만든다.
+- 문제 5~8개. 각 문제는 보기 4개, 정답 1개(answer는 0부터 시작하는 보기 번호).
+- 정답과 해설은 소스에 그대로 있는 사실만. 명령어·수치·이름처럼 기억할 가치가 있는 것을 묻는다.
+- 오답 보기는 그럴듯하지만 소스 기준으로 확실히 틀린 것. '모두 맞다' 같은 보기 금지.
+- explanation은 정답의 근거를 1~2문장으로. citations에 근거 소스 id(S1 형식).
+- 정답 위치를 고르게 섞는다."""
+
+QUIZ_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"questions": {"type": "array", "items": {
+        "type": "object",
+        "properties": {
+            "question": {"type": "string"},
+            "options": {"type": "array", "items": {"type": "string"}},
+            "answer": {"type": "integer"},
+            "explanation": {"type": "string"},
+            "citations": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["question", "options", "answer", "explanation", "citations"],
+        "additionalProperties": False,
+    }}},
+    "required": ["questions"],
+    "additionalProperties": False,
+}
+
+
+def clean_quiz(raw: list[dict]) -> list[dict]:
+    """Drop malformed questions: need >=3 distinct options and an in-range answer."""
+    out = []
+    for q in raw:
+        opts = [o.strip() for o in q.get("options") or [] if str(o).strip()]
+        a = q.get("answer")
+        if (q.get("question", "").strip() and len(opts) >= 3 and len(set(opts)) == len(opts)
+                and isinstance(a, int) and 0 <= a < len(opts)):
+            out.append({"question": q["question"].strip(), "options": opts, "answer": a,
+                        "explanation": q.get("explanation", "").strip(),
+                        "citations": q.get("citations") or []})
+    return out
 
 
 def _node(depth: int) -> dict[str, Any]:
@@ -117,7 +162,8 @@ class StudioResult:
     title: str
     answer: Answer | None = None  # document kinds
     tree: dict[str, Any] | None = None  # mindmap
-    sources: list[Hit] = field(default_factory=list)  # mindmap sources
+    sources: list[Hit] = field(default_factory=list)  # mindmap / quiz sources
+    quiz: list[dict] | None = None
     coverage: Coverage = field(default_factory=Coverage)
     latency_ms: int = 0
 
@@ -295,6 +341,13 @@ class Studio:
                     coverage=cov,
                     latency_ms=int((time.perf_counter() - t0) * 1000),
                 )
+            if kind == "quiz":
+                resp = self.llm.complete(prompt + "이 기록으로 복습 퀴즈를 만든다.",
+                                         system=QUIZ_SYSTEM, json_schema=QUIZ_SCHEMA)
+                r = StudioResult(kind, title, coverage=cov,
+                                 quiz=clean_quiz((resp.structured or {}).get("questions") or []))
+                r.latency_ms = int((time.perf_counter() - t0) * 1000)
+                return r
             resp = self.llm.complete(
                 prompt + f"요청: {title}을(를) 만든다.\n{INSTRUCTIONS[kind]}",
                 system=SYSTEM_PROMPT + STUDIO_RULES,
@@ -310,6 +363,8 @@ class Studio:
     def verify(
         self, r: StudioResult, hits: list[Hit], emit: Callable[[str, dict], None] | None = None
     ) -> StudioResult:
+        if r.kind == "quiz":
+            return _verify_quiz_impl(self.qa, r, hits, emit)
         data = getattr(r, "_raw", None)
         if r.kind == "mindmap" or not data:
             return r
@@ -335,6 +390,22 @@ class Studio:
         return r
 
 
+def _verify_quiz_impl(qa: GroundedQA, r: StudioResult, hits: list[Hit],
+                     emit: Callable[[str, dict], None] | None) -> StudioResult:
+    if not r.quiz:
+        return r
+    (emit or (lambda *_: None))("verifying", {"blocks": len(r.quiz)})
+    claims = [{"type": "text", "citations": q["citations"],
+               "text": f"{q['question']} 정답: {q['options'][q['answer']]}. {q['explanation']}"}
+              for q in r.quiz]
+    a = qa._verify(r.title, claims, hits, 1.0, 0, src_text=src_with_date)
+    for q, s in zip(r.quiz, a.sentences, strict=True):
+        q["citations"], q["support"] = s.citations, s.support
+        q["support_score"] = round(s.support_score, 4)
+    r.sources = a.sources
+    return r
+
+
 def _renumber(node: dict[str, Any], remap: dict[int, int]) -> None:
     node["citations"] = [remap[c] for c in node["citations"] if c in remap]
     for k in node["children"]:
@@ -353,6 +424,9 @@ def result_to_json(r: StudioResult) -> dict[str, Any]:
     }
     if r.kind == "mindmap":
         out["tree"] = r.tree
+        out["sources"] = [hit_to_json(h) for h in r.sources]
+    elif r.kind == "quiz":
+        out["quiz"] = r.quiz or []
         out["sources"] = [hit_to_json(h) for h in r.sources]
     else:
         out["answer"] = answer_to_json(r.answer) if r.answer else None

@@ -437,3 +437,21 @@ button.mm-tog:hover{background:var(--bg-subtle)}
 .erp-rows li { padding: 7px 10px; border-bottom: 1px solid var(--border, #e5e5e5); font-variant-numeric: tabular-nums; }
 .erp-rows li.sub { padding-left: 26px; color: var(--text-muted, #666); }
 .erp-rows li.sum { font-weight: 600; border-bottom: 0; }
+
+/* quiz */
+.quiz{margin:6px 0 14px;display:flex;flex-direction:column;gap:14px}
+.qz{border:1px solid var(--border);border-radius:12px;padding:12px 14px}
+.qz-q{font-weight:500;line-height:1.5;display:flex;gap:6px;flex-wrap:wrap;align-items:baseline}
+.qz-warn{font-size:11px;padding:1px 6px;border-radius:999px;background:var(--warn-soft);color:var(--warn)}
+.qz-opts{display:grid;gap:6px;margin-top:10px}
+.qz-opt{display:flex;align-items:center;gap:10px;text-align:left;padding:8px 10px;border:1px solid var(--border);border-radius:9px;background:transparent;color:inherit;font:inherit;cursor:pointer}
+.qz-opt:hover:not(:disabled){background:var(--bg-subtle)}
+.qz-opt:disabled{cursor:default}
+.qz-opt svg{width:16px;height:16px;margin-left:auto;flex:none}
+.qz-opt.ok{border-color:var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent)}
+.qz-opt.no{border-color:var(--bad);background:var(--bad-soft)}
+.qz-opt.dim{opacity:.55}
+.qz-n{width:22px;height:22px;border-radius:6px;display:inline-grid;place-items:center;font-size:12px;border:1px solid var(--border);flex:none}
+.qz-exp{margin-top:10px;font-size:14px;line-height:1.55;color:var(--text-muted)}
+.qz-more{margin-left:8px;font:inherit;font-size:13px;background:none;border:none;color:var(--accent);cursor:pointer;padding:0}
+.qz-score{display:flex;align-items:center;gap:10px;font-size:14px}
