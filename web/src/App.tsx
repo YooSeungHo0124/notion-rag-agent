@@ -396,8 +396,11 @@ export default function App() {
         ctl.signal,
       );
       const studio = { ...turn.studio!, coverage: r.coverage };
-      if (r.kind === "mindmap") {
-        const ok = !!r.tree && r.tree.children.length > 0;
+      if (r.kind === "mindmap" || r.kind === "quiz") {
+        const ok =
+          r.kind === "mindmap"
+            ? !!r.tree && r.tree.children.length > 0
+            : (r.quiz?.length ?? 0) > 0;
         const answer: Answer = {
           question: q,
           answerable: ok,
@@ -412,7 +415,8 @@ export default function App() {
         patchTurn(id, turn.id, {
           studio,
           answer,
-          mindmap: ok ? r.tree : undefined,
+          mindmap: ok && r.kind === "mindmap" ? r.tree : undefined,
+          quiz: ok && r.kind === "quiz" ? r.quiz : undefined,
           doneMs: Date.now() - t0,
         });
       } else if (r.answer) {

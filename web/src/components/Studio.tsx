@@ -1,6 +1,6 @@
-import { BookOpen, CalendarClock, ChevronRight, FileText, HelpCircle, Network, Sparkles } from "lucide-react";
+import { BookOpen, CalendarClock, Check, ChevronRight, FileText, HelpCircle, ListChecks, Network, RotateCcw, Sparkles, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import type { MindNode, StudioKind } from "../types";
+import type { MindNode, QuizItem, StudioKind } from "../types";
 import { Cite } from "./Answer";
 
 export const STUDIO_KINDS: { kind: StudioKind; title: string; desc: string; icon: ReactNode }[] = [
@@ -9,6 +9,7 @@ export const STUDIO_KINDS: { kind: StudioKind; title: string; desc: string; icon
   { kind: "faq", title: "자주 묻는 질문", desc: "기록으로 답할 수 있는 질문과 답", icon: <HelpCircle /> },
   { kind: "timeline", title: "타임라인", desc: "사건·변경·결정을 시간순으로", icon: <CalendarClock /> },
   { kind: "mindmap", title: "마인드맵", desc: "주제 구조를 한눈에, 노드를 눌러 질문", icon: <Network /> },
+  { kind: "quiz", title: "퀴즈", desc: "기록으로 복습하는 객관식 문제, 정답 근거 검증", icon: <ListChecks /> },
 ];
 
 export const STUDIO_TITLE: Record<StudioKind, string> = {
@@ -18,6 +19,7 @@ export const STUDIO_TITLE: Record<StudioKind, string> = {
   timeline: "타임라인",
   guide: "소스 가이드",
   mindmap: "마인드맵",
+  quiz: "퀴즈",
 };
 
 /** Popover: pick a Studio document for the current scope, optionally narrowed by a topic. */
@@ -124,6 +126,75 @@ export function MindMap({ root, onAsk }: { root: MindNode; onAsk: (q: string) =>
       <ul className="mm-root">
         <Node n={root} depth={0} onAsk={onAsk} path={[]} />
       </ul>
+    </div>
+  );
+}
+
+/** Multiple-choice review quiz. Each answer key was checked against its cited notes;
+ *  a question whose key is not backed by the notes is marked instead of hidden. */
+export function Quiz({ items, onAsk }: { items: QuizItem[]; onAsk: (q: string) => void }) {
+  const [picked, setPicked] = useState<(number | null)[]>(() => items.map(() => null));
+  const done = picked.filter((x) => x !== null).length;
+  const right = picked.filter((x, i) => x === items[i].answer).length;
+  return (
+    <div className="quiz fade">
+      {items.map((q, i) => {
+        const p = picked[i];
+        const shown = p !== null;
+        return (
+          <section key={i} className="qz">
+            <div className="qz-q">
+              <b>{i + 1}.</b> {q.question}
+              {q.support && q.support !== "supported" && (
+                <span className="qz-warn" title="정답 근거가 노트에서 충분히 확인되지 않았습니다">
+                  근거 약함
+                </span>
+              )}
+            </div>
+            <div className="qz-opts" role="group" aria-label={`${i + 1}번 보기`}>
+              {q.options.map((o, j) => {
+                const cls = !shown ? "" : j === q.answer ? "ok" : j === p ? "no" : "dim";
+                return (
+                  <button
+                    key={j}
+                    className={`qz-opt ${cls}`}
+                    disabled={shown}
+                    aria-pressed={p === j}
+                    onClick={() => setPicked((xs) => xs.map((x, k) => (k === i ? j : x)))}
+                  >
+                    <span className="qz-n">{String.fromCharCode(65 + j)}</span>
+                    <span>{o}</span>
+                    {shown && j === q.answer && <Check />}
+                    {shown && j === p && j !== q.answer && <X />}
+                  </button>
+                );
+              })}
+            </div>
+            {shown && (
+              <div className="qz-exp">
+                {q.explanation}
+                {q.citations.slice(0, 3).map((c) => (
+                  <Cite key={c} n={c} />
+                ))}
+                {p !== q.answer && (
+                  <button className="qz-more" onClick={() => onAsk(`${q.question} 내 노트 기준으로 자세히 설명해줘`)}>
+                    더 물어보기
+                  </button>
+                )}
+              </div>
+            )}
+          </section>
+        );
+      })}
+      <div className="qz-score" role="status">
+        {done < items.length ? `${done}/${items.length} 풀이` : `${items.length}문제 중 ${right}개 정답`}
+        {done > 0 && (
+          <button className="act" onClick={() => setPicked(items.map(() => null))}>
+            <RotateCcw />
+            다시 풀기
+          </button>
+        )}
+      </div>
     </div>
   );
 }

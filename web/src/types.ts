@@ -159,6 +159,7 @@ export interface Turn {
   mode: "ask" | "agent" | "studio";
   studio?: { kind: StudioKind; title: string; scopeLabel: string; topic?: string; page_ids: string[]; coverage?: Coverage };
   mindmap?: MindNode;
+  quiz?: QuizItem[];
   startedAt: number;
   stage?: Stage;
   retrieved?: Stage;
@@ -191,7 +192,17 @@ export interface AnswerImage {
   src: string;
 }
 
-export type StudioKind = "briefing" | "study" | "faq" | "timeline" | "guide" | "mindmap";
+export type StudioKind = "briefing" | "study" | "faq" | "timeline" | "guide" | "mindmap" | "quiz";
+
+export interface QuizItem {
+  question: string;
+  options: string[];
+  answer: number;
+  explanation: string;
+  citations: number[];
+  support?: "supported" | "partial" | "unsupported";
+  support_score?: number;
+}
 
 export interface Coverage {
   pages_total: number;
@@ -214,6 +225,7 @@ export interface StudioResult {
   latency_ms: number;
   answer?: Answer | null;
   tree?: MindNode;
+  quiz?: QuizItem[];
   sources?: SourceHit[];
 }
 

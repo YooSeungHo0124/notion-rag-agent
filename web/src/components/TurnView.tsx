@@ -19,7 +19,7 @@ import {
 import { useEffect, useState } from "react";
 import type { AgentRun, Answer, Turn } from "../types";
 import AnswerBody from "./Answer";
-import { MindMap } from "./Studio";
+import { MindMap, Quiz } from "./Studio";
 
 const CONF = {
   high: { dot: "c-high", txt: "근거 충분" },
@@ -526,14 +526,17 @@ export default function TurnView({
           <p>범위를 넓히거나 주제를 바꿔 다시 시도해 보세요.</p>
         </div>
       )}
-      {a && t.mindmap && (
+      {a && (t.mindmap || t.quiz) && (
         <>
           <StudioLine t={t} />
-          <MindMap root={t.mindmap} onAsk={act.followup} />
+          {t.mindmap && <MindMap root={t.mindmap} onAsk={act.followup} />}
+          {t.quiz && <Quiz items={t.quiz} onAsk={act.followup} />}
           <div className="trust fade">
             <span className="pill" style={{ cursor: "default" }}>
               <span className="c-dot c-med" aria-hidden="true" />
-              구조 요약 · 문장 검증 대상 아님 · 출처 {a.sources.length}
+              {t.quiz
+                ? `정답 근거 확인 ${t.quiz.filter((q) => q.support === "supported").length}/${t.quiz.length} · 출처 ${a.sources.length}`
+                : `구조 요약 · 문장 검증 대상 아님 · 출처 ${a.sources.length}`}
             </span>
             {a.sources.length > 0 && (
               <button className="act" onClick={() => act.openSource(t.id, 1)}>
@@ -553,7 +556,7 @@ export default function TurnView({
           </div>
         </>
       )}
-      {a && a.answerable && !t.mindmap && (
+      {a && a.answerable && !t.mindmap && !t.quiz && (
         <>
           {t.mode === "studio" && <StudioLine t={t} />}
           {t.doneMs !== undefined && t.mode !== "studio" && (
