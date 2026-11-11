@@ -134,3 +134,68 @@ fused = hybrid RRF only, plain = after rerank.
 | fused_page | 0.90 | 1.00 | 1.00 | 0.95 |
 | chunk | 0.78 | 0.97 | 1.00 | 0.86 |
 | page | 1.00 | 1.00 | 1.00 | 1.00 |
+
+## 20261111_172428 · v5-fence · n=46
+
+| level | R@1 | R@5 | R@10 | MRR |
+|---|---|---|---|---|
+| fused_chunk | 0.55 | 0.90 | 0.93 | 0.71 |
+| fused_page | 0.88 | 1.00 | 1.00 | 0.94 |
+| chunk | 0.72 | 0.93 | 0.95 | 0.80 |
+| page | 1.00 | 1.00 | 1.00 | 1.00 |
+
+- answer_accuracy: 0.88
+- answer_correct_or_partial: 1.00
+- false_abstain_rate: 0.00
+- abstain_accuracy_unanswerable: 1.00
+- mean_supported_ratio: 0.86
+- mean_latency_s: 7.62
+
+## 20261111_175218 · v5-agent · n=46
+
+| level | R@1 | R@5 | R@10 | MRR |
+|---|---|---|---|---|
+| fused_chunk | 0.55 | 0.90 | 0.93 | 0.71 |
+| fused_page | 0.88 | 1.00 | 1.00 | 0.94 |
+| chunk | 0.72 | 0.93 | 0.95 | 0.80 |
+| page | 1.00 | 1.00 | 1.00 | 1.00 |
+
+- answer_accuracy: 0.93
+- answer_correct_or_partial: 1.00
+- false_abstain_rate: 0.00
+- abstain_accuracy_unanswerable: 1.00
+- mean_supported_ratio: 0.85
+- mean_latency_s: 34.56
+- mean_agent_steps: 2.11
+
+## 20261111_180005 · v5-fence-r2 · n=46
+
+| level | R@1 | R@5 | R@10 | MRR |
+|---|---|---|---|---|
+| fused_chunk | 0.55 | 0.90 | 0.93 | 0.71 |
+| fused_page | 0.88 | 1.00 | 1.00 | 0.94 |
+| chunk | 0.72 | 0.93 | 0.95 | 0.80 |
+| page | 1.00 | 1.00 | 1.00 | 1.00 |
+
+- answer_accuracy: 0.85
+- answer_correct_or_partial: 1.00
+- false_abstain_rate: 0.00
+- abstain_accuracy_unanswerable: 1.00
+- mean_supported_ratio: 0.86
+- mean_latency_s: 7.99
+
+## 20261111_180716 · pre-fence-recheck · n=46
+
+| level | R@1 | R@5 | R@10 | MRR |
+|---|---|---|---|---|
+| fused_chunk | 0.65 | 0.95 | 0.97 | 0.78 |
+| fused_page | 0.90 | 1.00 | 1.00 | 0.95 |
+| chunk | 0.78 | 0.97 | 1.00 | 0.86 |
+| page | 1.00 | 1.00 | 1.00 | 1.00 |
+
+- answer_accuracy: 0.88
+- answer_correct_or_partial: 0.97
+- false_abstain_rate: 0.00
+- abstain_accuracy_unanswerable: 1.00
+- mean_supported_ratio: 0.84
+- mean_latency_s: 7.59

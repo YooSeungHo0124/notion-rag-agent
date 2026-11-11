@@ -69,6 +69,26 @@ def _split_code(text: str, max_chars: int) -> list[str]:
     return out
 
 
+def _balance_fences(parts: list[str]) -> list[str]:
+    """Close a ``` fence left open at the end of a part and reopen it (same language) at
+    the start of the next one. Needed for non-code blocks that *contain* code, e.g. a
+    toggle heading whose children include a code block."""
+    out, opener = [], None
+    for part in parts:
+        if opener is not None and not part.startswith("```"):
+            part = f"{opener}\n{part}"
+        lines = part.split("\n")
+        open_line = None
+        for ln in lines:
+            if ln.lstrip().startswith("```"):
+                open_line = None if open_line is not None else ln.strip()
+        if open_line is not None:
+            part = part.rstrip("\n") + "\n```"
+        opener = open_line
+        out.append(part)
+    return out
+
+
 def _common_prefix(a: list[str], b: list[str]) -> list[str]:
     out = []
     for x, y in zip(a, b, strict=False):
@@ -138,7 +158,8 @@ def chunk_page(page: NotionPage, cfg: ChunkingConfig) -> list[Chunk]:
                 if cur:
                     raw.append((sec.heading_path, [x.block_id for x in cur], _join(cur)))
                     cur = []
-                parts = _split_code(p.text, max_c) if p.is_code else _split_long(p.text, max_c, ov)
+                parts = (_split_code(p.text, max_c) if p.is_code
+                         else _balance_fences(_split_long(p.text, max_c - 20, ov)))
                 for part in parts:
                     raw.append((sec.heading_path, [p.block_id], part))
                 carry = ""
