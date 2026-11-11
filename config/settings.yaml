@@ -18,4 +18,8 @@ retrieval:
   candidate_k: 50
   final_k: 5
   reranker_model: BAAI/bge-reranker-v2-m3
+  # LoRA from training/rerank_ft.py (e.g. data/rerank/champion = nra-reranker@champion).
+  # Off: the champion did not change production R@1 (40q) and shifted score calibration
+  # below min_rerank_score on 1 answerable question. See README "재정렬 모델 파인튜닝".
+  reranker_adapter: ""
   min_rerank_score: 0.2

@@ -294,6 +294,31 @@ uv run mlflow ui --backend-store-uri sqlite:///mlruns/mlflow.db --port 5000   # 
 - **품질 게이트:** 답변 정확도가 0.85 미만이거나 기록에 없는 질문을 하나라도 지어내 답하면 실행이 실패로 표시됩니다. 결과는 MLflow에 커밋 번호와 함께 남아 어느 변경에서 떨어졌는지 바로 비교할 수 있습니다.
 - 실제 1회 실행 결과: 동기화(변경 3페이지) → 평가 14/14 → 게이트 통과, 약 5분.
 
+### 재정렬 모델 파인튜닝 (LoRA, MLflow 모델 레지스트리)
+
+재정렬 모델(bge-reranker-v2-m3)을 내 노트에 맞게 학습시켜 보고, 운영에 넣을지 수치로 정했습니다([`training/`](training)). **결론은 "학습은 효과가 있었지만 운영에는 넣지 않음"입니다.**
+
+1. **학습 데이터:** 노트 청크 786개에 대해 Claude가 질문을 하나씩 만들었습니다. 평가 세트(40문항)의 정답 페이지는 통째로 뺐고, 나머지 페이지를 해시로 나눠 학습 555개 / 별도 테스트 231개로 썼습니다. 페이지 단위로 나눠서 같은 페이지가 학습과 테스트에 동시에 들어가지 않습니다.
+2. **어려운 오답:** 실제 운영과 같은 하이브리드 검색 상위 50개 중 **다른 페이지** 청크를 오답으로 씁니다. 같은 페이지 청크는 사실상 정답일 때가 많아 뺐습니다.
+3. **학습:** LoRA(r=16)로 정답 1개 + 오답 7개 묶음에 softmax 교차 엔트로피. RTX 5080에서 3분, VRAM 3.5GB.
+4. **기록과 선택:** 실행마다 MLflow에 설정·지표·문항별 승패를 남기고 `nra-reranker` 모델로 등록합니다. 두 테스트 세트 모두에서 기본 모델을 이기고, 지금까지의 최고 버전보다 나을 때만 `champion` 별칭을 옮깁니다.
+
+| 설정 | 별도 테스트 231문항 R@1 | MRR | 문항별 승/패 | 평가 40문항 R@1 | MRR | 승/패 |
+|---|---|---|---|---|---|---|
+| 기본 모델 | 0.775 | 0.853 | – | 0.725 | 0.822 | – |
+| 1 epoch, lr 1e-4 | 0.818 | 0.876 | 26 / 15 | 0.725 | 0.828 | 3 / 3 |
+| **2 epoch, lr 5e-5 (champion)** | 0.818 | 0.881 | **30 / 10** | **0.750** | **0.839** | **4 / 0** |
+| 3 epoch, r=32 | 0.823 | 0.881 | 34 / 15 | 0.725 | 0.830 | 5 / 2 |
+
+<sub>첫 실행(2 epoch, lr 1e-4)은 평가 40문항 MRR이 기본보다 낮아(0.819) 탈락했습니다. 이 표는 학습 스크립트의 평가(최대 512토큰, bf16) 기준입니다.</sub>
+
+**운영에 넣지 않은 이유:** champion을 실제 검색 경로(최대 1024토큰, fp16)에 꽂아 40문항을 다시 재 보니 R@1은 0.775로 **그대로**였고(2문항 상승, 1문항 하락), 점수 분포가 크게 바뀌었습니다. 기본 모델은 정답이 있는 질문의 1위 점수가 모두 0.65 이상이었는데, champion은 0.13까지 내려가 "근거 없음" 기준(0.2) 아래로 떨어지는 문항이 생겼습니다. 순위만 학습시키는 손실이라 점수의 절대값(보정)이 유지되지 않은 것입니다. 이득은 확인되지 않고 거절 오류 위험만 생겨서 `reranker_adapter`를 비워 두었습니다. 다음에 할 일은 학습 게이트에 **점수 보정 검사**(정답 질문의 1위 점수가 기준선 위에 있는 비율)를 추가하거나, 어댑터용 기준값을 따로 맞추는 것입니다.
+
+```bash
+uv run python -m training.build_pairs --n 900      # 합성 질문 (claude -p)
+uv run python -m training.rerank_ft all --epochs 2 --lr 5e-5   # 마이닝 → 학습 → 평가 → 등록 (서버 끈 상태)
+```
+
 ---
 
 ## 기술 스택
@@ -316,6 +341,7 @@ uv run mlflow ui --backend-store-uri sqlite:///mlruns/mlflow.db --port 5000   # 
 | 관측 | **Arize Phoenix** + OpenTelemetry (OpenInference) | LangGraph 노드, `claude -p`, 검색, 재정렬, 도구까지 한 트레이스로 |
 | 평가 | 자체 하네스 (Recall@k, MRR, LLM 채점, 거절 정확도) | 변경 전후를 같은 기준으로 비교 |
 | 스케줄링 | **Airflow** 3 (TaskFlow DAG, compose `airflow` 프로필) | 동기화·평가·품질 게이트를 매일 자동 실행. 앱 API만 호출해 스케줄러와 GPU 작업을 분리 |
+| 모델 학습 | **PyTorch** + **PEFT**(LoRA), transformers | 568M 크로스 인코더를 16GB GPU에서 3분 만에 미세조정. 어댑터만 저장(수십 MB) |
 | 실험 기록 | **MLflow** 3 (로컬 SQLite 저장소) | 실행마다 설정·지표·git 커밋·평가 세트 해시를 남겨 결과를 재현 가능하게 |
 | 하드웨어 | RTX 5080 16GB (CUDA 12.8 wheels) | 전체 색인 시 VRAM 최대 9.6GB |
 
@@ -332,15 +358,17 @@ src/notion_agent/
 ├── tools/         ToolRegistry + 내장 도구(검색·페이지·타임라인·쓰기·기억)
 ├── erp/           Odoo 클라이언트(허용 목록) + ERP 도구 6개 + CRM 활동 쓰기(승인)
 ├── memory/        장기 기억(profile)
-├── llm/           LLMClient, claude -p 어댑터
+├── llm/           LLMClient, claude -p 어댑터, Anthropic API 어댑터
 ├── observability/ Phoenix/OTel tracing
 ├── api/           FastAPI(SSE, 페이지 뷰어, 이미지 프록시, 에이전트 재개)
 ├── mcp_server.py  읽기 전용 my-memory MCP
 └── cli.py         nra sync | index-docs | ask | agent | serve | mcp | doctor
 web/               React UI (사이드바 · 문서형 답변 · 스튜디오 · 노트 · 출처 패널)
-eval/              평가 데이터 생성 · 실행 · 청크 통계 · 결과(results.md)
+eval/              평가 데이터 생성 · 실행 · 청크 통계 · 결과(results.md) · MLflow 기록
+training/          재정렬 모델 LoRA 파인튜닝 (합성 질문 → 오답 마이닝 → 학습 → 평가 → 레지스트리)
+dags/              Airflow 야간 파이프라인 (동기화 → 평가 → 품질 게이트)
 docs/              직무 분석 → 요구사항 → 스택 → 설계 문서 (01~09)
-tests/             81개 (가짜 LLM·임베딩으로 GPU 없이 실행)
+tests/             89개 (가짜 LLM·임베딩으로 GPU 없이 실행)
 ```
 
 ---
