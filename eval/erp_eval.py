@@ -69,6 +69,11 @@ def main() -> None:
     out = HERE / "runs" / f"erp_{time.strftime('%Y%m%d_%H%M%S')}_{args.label}.json"
     out.parent.mkdir(exist_ok=True)
     out.write_text(json.dumps({"summary": summary, "rows": rows}, ensure_ascii=False, indent=1))
+    from eval.tracking import file_hash, log_run
+
+    log_run("erp-agent", args.label, {"n": len(rows), "api": args.api,
+            "dataset_sha": file_hash(HERE / "erp_dataset.json")},
+            summary | {"passed": sum(r["ok"] for r in rows)})
 
 
 if __name__ == "__main__":
