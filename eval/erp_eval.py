@@ -58,7 +58,9 @@ def run(api: str, label: str) -> dict:
     for it in data:
         t0 = time.time()
         run = ask(args.api, it["q"], f"eval-{args.label}-{it['id']}-{int(t0)}")
-        g = grade(it, run) | {"id": it["id"], "q": it["q"], "s": round(time.time() - t0, 1)}
+        g = grade(it, run) | {"id": it["id"], "q": it["q"], "s": round(time.time() - t0, 1),
+                              "done_reason": run.get("done_reason"), "status": run.get("status"),
+                              "thread_id": run.get("thread_id")}  # find the trace in Phoenix
         rows.append(g)
         print(f"{'PASS' if g['ok'] else 'FAIL'} {it['id']} {g['s']}s {g['tools']}"
               f" {g.get('missing') or ''}{g.get('missing_src') or ''}", flush=True)
