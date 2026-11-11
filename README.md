@@ -290,7 +290,8 @@ uv run mlflow ui --backend-store-uri sqlite:///mlruns/mlflow.db --port 5000   # 
 
 | 영역 | 선택 | 고른 이유 |
 |---|---|---|
-| LLM | **Claude Sonnet** via `claude -p` (구독), `LLMClient` 추상화 | 유료 API 없이 개인 사용. 설정 한 줄로 Anthropic API로 교체 가능 |
+| LLM | **Claude Sonnet** via `claude -p` (개인 실행) 또는 **Anthropic API** (`anthropic` SDK, 컨테이너), `LLMClient` 추상화 | 개인 사용은 구독으로, 배포는 API 키로. `LLM_PROVIDER` 한 줄로 전환하고, 구조화 출력·스트리밍 계약은 같음 |
+| 배포 | **Docker** 멀티 스테이지 이미지 (UI 빌드 + CUDA 백엔드), compose `app` 프로필 | 모델 가중치는 이미지에 넣지 않고 캐시를 마운트. 비루트 사용자, 헬스체크, 호스트에는 127.0.0.1로만 공개 |
 | 임베딩 (의미) | **Qwen3-Embedding-4B** | 한국어·영어가 섞인 기술 노트에 강하고, 16GB GPU에서 동작 |
 | 임베딩 (키워드) | **bge-m3** lexical weights | 고유명사, 명령어, 변수명 매칭 |
 | 재정렬·검증 | **bge-reranker-v2-m3** | 검색 재정렬과 답변 문장 검증에 같은 모델을 재사용 |
@@ -355,6 +356,10 @@ docker compose up -d odoo-db odoo                # http://127.0.0.1:8069
 uv run nra index-docs                            # scenario/docs 색인 (서버를 끈 상태에서)
 uv run nra agent "Acme Corporation 신규 주문을 지금 확정해도 돼?"
 uv run python eval/erp_eval.py --label mytest    # ERP 평가 (서버 실행 중)
+
+# 4) (선택) 컨테이너로 실행: LLM은 Anthropic API (구독 로그인은 이미지에 넣지 않음)
+#    로컬 서버를 먼저 끄고 (임베디드 Qdrant 파일 잠금, GPU 메모리)
+ANTHROPIC_API_KEY=... docker compose --profile app up -d --build app   # http://127.0.0.1:8000
 
 # 그 밖에
 uv run nra ask "OOM 났을 때 batch 몇으로 줄였지?"     # 터미널에서 질문

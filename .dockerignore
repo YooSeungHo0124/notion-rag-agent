@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+.git
+.venv
+data/
+volumes/
+mlruns/
+eval/runs/
+**/__pycache__
+web/node_modules
+web/dist
+*.log
