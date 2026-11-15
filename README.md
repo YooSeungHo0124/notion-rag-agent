@@ -2,10 +2,23 @@
 
 > **내 노션 600여 페이지에서 답을 찾고, 그 답이 어디서 왔는지 한 번에 대조할 수 있게 해 주는 개인 연구 도구**
 
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-SSE-009688?logo=fastapi&logoColor=white)
+![React](https://img.shields.io/badge/React-UI-61DAFB?logo=react&logoColor=black)
+![Qdrant](https://img.shields.io/badge/Qdrant-hybrid-DC244C)
+![LangGraph](https://img.shields.io/badge/LangGraph-agent-1C3C3C)
+![PyTorch](https://img.shields.io/badge/PyTorch-LoRA-EE4C2C?logo=pytorch&logoColor=white)
+![MLflow](https://img.shields.io/badge/MLflow-3.18-0194E2?logo=mlflow&logoColor=white)
+![Airflow](https://img.shields.io/badge/Airflow-3.0-017CEE?logo=apacheairflow&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-GPU-2496ED?logo=docker&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-92%20passed-success)
+
 업무 일지, 트러블슈팅, 설치 문서, 실험 기록을 노션에 몇 년씩 쌓다 보면 "그때 그 설정값 뭐였지?"가 매일 생깁니다.
 노션 검색은 단어가 정확히 맞아야 찾아 주고, 범용 AI는 내 기록을 모릅니다.
 이 프로젝트는 **내 노션만을 근거로 답하고, 모든 문장에 원문 위치를 달고, 근거가 없으면 지어내지 않는** 에이전트입니다.
 NotebookLM의 경험을 내 노션 위에 직접 구현했습니다.
+
+**목차** · [기능별 데모](#기능별-데모) · [한눈에 보기](#한눈에-보기) · [쉽게 말하면](#쉽게-말하면-eli5) · [전체 구조](#전체-구조) · [요청 처리 흐름](#요청-처리-흐름) · [어떻게 동작하나](#어떻게-동작하나) · [평가](#평가) · [기술 스택](#기술-스택) · [프로젝트 구조](#프로젝트-구조) · [실행하기](#실행하기) · [한계와 다음 단계](#한계와-다음-단계)
 
 ![데모: 질문 → 진행 단계 → 근거가 달린 블록형 답변과 관련 이미지 → 출처 클릭 → 노션 원문 위치](docs/assets/demo.gif)
 
@@ -54,17 +67,6 @@ NotebookLM의 경험을 내 노션 위에 직접 구현했습니다.
 ![MLflow 학습 실행](docs/assets/mlflow_runs.png)
 ![MLflow 모델 레지스트리](docs/assets/mlflow_models.png)
 </details>
-
-
-| 요건 | 이 프로젝트에서 | 확인 방법 |
-|---|---|---|
-| LLM 서비스 서빙 | FastAPI + SSE 스트리밍, React UI, Claude API 백엔드, 오류 시 503 응답 | 데모 ①~④ |
-| RAG | 하이브리드 검색 → 재정렬 → 근거 생성 → 문장 단위 검증 → 근거 없으면 거절 | 데모 ①②, [평가](#평가) |
-| ERP/CRM 연동 | Odoo 도구 호출 에이전트. CRM 기록은 사람 승인 후 실행 | 데모 ③, ERP 32문항 평가 |
-| Docker | 멀티 스테이지 이미지, GPU 런타임, non-root, compose 프로필(app·odoo·airflow) | `Dockerfile`, `docker-compose.yml` |
-| MLflow | 평가·학습 실행 기록, 모델 레지스트리, 기본 모델보다 나을 때만 승격 | 데모 ⑤ |
-| Airflow | 야간 파이프라인: 노션 동기화 → ERP 평가 → 품질 게이트 | `dags/nra_nightly.py` |
-| PyTorch 학습 | 재정렬 모델 LoRA 파인튜닝. 운영 투입은 보류했고 그 판단 근거를 기록 | [재정렬 모델 파인튜닝](#재정렬-모델-파인튜닝-lora-mlflow-모델-레지스트리) |
 
 ---
 
@@ -132,6 +134,57 @@ flowchart LR
 - **로컬에 있는 것:** 노트 데이터, 벡터 DB, 임베딩, 재정렬, 검증은 모두 이 PC 안에 있습니다.
 - **외부로 나가는 것:** 답변을 쓸 때 Claude에게 보내는 질문과 상위 조각 5개뿐입니다.
 - **서버 공개 범위:** `127.0.0.1`에만 엽니다. 다른 PC에서는 접속할 수 없습니다.
+
+---
+
+## 요청 처리 흐름
+
+질문 하나가 화면에 답으로 나오기까지의 순서입니다. 서버는 단계가 끝날 때마다 SSE로 진행 상황을 보내고, 화면은 그 단계를 실시간으로 표시합니다.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor U as 사용자
+  participant W as React UI
+  participant A as FastAPI (SSE)
+  participant S as 검색 (Qdrant)
+  participant R as 재정렬 (GPU)
+  participant L as Claude
+  participant V as 검증기
+
+  U->>W: 질문 입력
+  W->>A: POST /api/ask/stream
+  A->>S: 의미 벡터 + 키워드 벡터 검색 (RRF top-50)
+  S-->>A: 후보 조각 50개
+  A->>R: 질문-조각 쌍 점수 매기기
+  R-->>A: 상위 5개 + 점수
+  alt 최고 점수가 기준(0.2) 미만
+    A-->>W: 답변 거절 + 가장 가까운 기록
+  else 근거 있음
+    A-->>W: stage: 답변 작성 중
+    A->>L: 질문 + 조각 5개 + JSON 스키마
+    L-->>A: 블록형 답변 (문장마다 출처 번호), 부분 결과 스트리밍
+    A->>V: 문장·숫자·코드를 인용 조각과 대조
+    V-->>A: 문장별 근거 점수, 신뢰도
+    A-->>W: result: 답변 + 출처 + 신뢰도
+  end
+  U->>W: 출처 번호 클릭
+  W->>A: GET /api/page/{id}
+  A-->>W: 원문 + 인용 블록 하이라이트
+```
+
+**에이전트 모드**는 LangGraph가 위 과정을 도구로 감싸 여러 번 반복합니다. 플래너가 질문을 보고 노트 검색, 페이지 읽기, Odoo 조회(거래처·주문·재고·송장) 중 필요한 도구를 고르고, 결과를 모아 같은 검증기를 거칩니다. 노션이나 CRM에 쓰는 도구는 실행 직전에 멈추고 사람의 승인을 기다립니다.
+
+**운영 흐름**은 앱 밖에서 돕니다.
+
+```mermaid
+flowchart LR
+  AF[Airflow<br/>매일 03:00] -->|POST /api/sync| APP[앱 컨테이너<br/>GPU]
+  AF -->|ERP 평가 32문항| APP
+  AF --> G{품질 게이트<br/>정확도 ≥ 0.85<br/>거절 100%}
+  APP -. 평가·학습 기록 .-> ML[(MLflow<br/>실험 + 모델 레지스트리)]
+  TR[LoRA 학습<br/>training/] -->|기본 모델보다 나을 때만 승격| ML
+```
 
 ---
 
