@@ -39,3 +39,4 @@ eval/runs/
 web/tsconfig.tsbuildinfo
 mlruns/
 docs/assets/raw/
+docs/private/
