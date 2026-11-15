@@ -11,6 +11,61 @@ NotebookLM의 경험을 내 노션 위에 직접 구현했습니다.
 
 <sub>▶ 원본 영상: [docs/assets/demo.mp4](docs/assets/demo.mp4) (45초) · 질문 "OCR 겹친 문자 구분 문제 어떻게 됐어?"</sub>
 
+### 기능별 데모
+
+모든 클립은 실제 앱을 실시간(배속 없음)으로 녹화했습니다. 대화 기록이 없는 새 브라우저에서 [`scripts/record_demo.py`](scripts/record_demo.py)를 실행해 만들었으므로 같은 장면을 다시 찍을 수 있습니다.
+
+| 장면 | 무엇을 보여주나 |
+|---|---|
+| **① 근거 기반 답변** | 문장마다 출처 번호를 단 답변이 나옵니다. 문장별 근거 점수를 펼쳐 보고, 출처 패널에서 노션 원문 위치를 형광펜으로 확인합니다 |
+| **② 근거 없으면 거절** | 노트에 없는 질문에는 답을 지어내지 않습니다. 가장 가까운 기록과 관련도(0.00)를 보여주고 다음 행동을 제안합니다 |
+| **③ ERP 에이전트 (Odoo)** | 에이전트가 판매주문 조회 도구를 직접 골라 실행합니다. 실행 과정과 조회 조건, 집계 범위("19건 기준")를 함께 밝히고 문장마다 근거를 검증합니다 |
+| **④ 스튜디오 퀴즈** | 주제로 범위를 좁혀 객관식 퀴즈를 만듭니다. 각 문제의 정답이 실제 노트에 근거하는지 검증한 뒤 보여주고, 고르면 정답·해설·출처가 나옵니다 |
+
+<details open>
+<summary><b>① 근거 기반 답변 → 출처 패널</b></summary>
+
+![근거 기반 답변](docs/assets/demo_ask.gif)
+</details>
+
+<details>
+<summary><b>② 근거가 없으면 답하지 않음</b></summary>
+
+![근거 없음 거절](docs/assets/demo_abstain.gif)
+</details>
+
+<details open>
+<summary><b>③ ERP 에이전트: Odoo 판매주문 조회 → 근거 검증</b></summary>
+
+![ERP 에이전트](docs/assets/demo_erp.gif)
+</details>
+
+<details>
+<summary><b>④ 스튜디오 퀴즈: 정답 근거 검증 8/8</b></summary>
+
+![스튜디오 퀴즈](docs/assets/demo_quiz.gif)
+</details>
+
+<details>
+<summary><b>⑤ MLflow: 재정렬 모델 학습 실행과 모델 레지스트리</b></summary>
+
+학습 실행 7개가 각각 모델 레지스트리 버전(`nra-reranker` v1~v7)과 연결되어 있습니다. 버전마다 `score_key` 태그를 붙여 기본 모델보다 나은지 비교합니다.
+
+![MLflow 학습 실행](docs/assets/mlflow_runs.png)
+![MLflow 모델 레지스트리](docs/assets/mlflow_models.png)
+</details>
+
+
+| 요건 | 이 프로젝트에서 | 확인 방법 |
+|---|---|---|
+| LLM 서비스 서빙 | FastAPI + SSE 스트리밍, React UI, Claude API 백엔드, 오류 시 503 응답 | 데모 ①~④ |
+| RAG | 하이브리드 검색 → 재정렬 → 근거 생성 → 문장 단위 검증 → 근거 없으면 거절 | 데모 ①②, [평가](#평가) |
+| ERP/CRM 연동 | Odoo 도구 호출 에이전트. CRM 기록은 사람 승인 후 실행 | 데모 ③, ERP 32문항 평가 |
+| Docker | 멀티 스테이지 이미지, GPU 런타임, non-root, compose 프로필(app·odoo·airflow) | `Dockerfile`, `docker-compose.yml` |
+| MLflow | 평가·학습 실행 기록, 모델 레지스트리, 기본 모델보다 나을 때만 승격 | 데모 ⑤ |
+| Airflow | 야간 파이프라인: 노션 동기화 → ERP 평가 → 품질 게이트 | `dags/nra_nightly.py` |
+| PyTorch 학습 | 재정렬 모델 LoRA 파인튜닝. 운영 투입은 보류했고 그 판단 근거를 기록 | [재정렬 모델 파인튜닝](#재정렬-모델-파인튜닝-lora-mlflow-모델-레지스트리) |
+
 ---
 
 ## 한눈에 보기
@@ -384,6 +439,7 @@ web/               React UI (사이드바 · 문서형 답변 · 스튜디오 ·
 eval/              평가 데이터 생성 · 실행 · 청크 통계 · 결과(results.md) · MLflow 기록
 training/          재정렬 모델 LoRA 파인튜닝 (합성 질문 → 오답 마이닝 → 학습 → 평가 → 레지스트리)
 dags/              Airflow 야간 파이프라인 (동기화 → 평가 → 품질 게이트)
+scripts/           README 데모 녹화 (Playwright 헤드리스 → WebM → GIF)
 tests/             92개 (가짜 LLM·임베딩으로 GPU 없이 실행)
 ```
 
